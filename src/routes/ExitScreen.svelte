@@ -78,6 +78,12 @@
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   onMount(() => {
+    // Preload all exit images for instant display
+    EXIT_IMAGES.forEach(src => {
+      const img = new Image();
+      img.src = src;
+    });
+
     bgTimer = setInterval(() => {
       imageIndex = (imageIndex + 1) % EXIT_IMAGES.length;
     }, 4000);
@@ -218,6 +224,7 @@
         src={img}
         alt="Exit banner"
         class:visible={imageIndex === idx}
+        loading="eager"
       />
     {/each}
   </div>
@@ -274,7 +281,7 @@
     display: flex;
     width: 100vw;
     height: 100vh;
-    background-color: #000;
+    background-color: #000;  /* fallback – no white flash */
   }
 
   /* ── Left Image Banner ── */
@@ -293,6 +300,7 @@
     left: 0;
     opacity: 0;
     transition: opacity 1s ease-in-out;
+    will-change: opacity;  /* GPU acceleration for smooth transitions */
   }
 
   .exit-left img.visible {
@@ -398,4 +406,3 @@
     .exit-button { height: 56px; font-size: 16px; }
   }
 </style>
-

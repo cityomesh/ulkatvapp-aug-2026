@@ -5,17 +5,16 @@
 
   // ── Form state ──────────────────────────────────────────────
   let nameValue   = '';
-  let ageValue    = '';
-  let genderValue = null;   // 'Male' | 'Female' | null
+  let ageValue    = 18;
+  let genderValue = 'Male';   // 'Male' | 'Female'
 
   // ── Focus state ─────────────────────────────────────────────
-  // 'name' | 'age' | 'gender_male' | 'gender_female' | 'save' | 'cancel'
   let focusKey = 'name';
 
   // ── Keyboard state ──────────────────────────────────────────
   let isKeyboardVisible = false;
-  let keyboardTarget    = '';   // 'name' | 'age'
-  let keyboard;                 // component ref
+  let keyboardTarget    = '';
+  let keyboard;
 
   // ── Background rotation ─────────────────────────────────────
   const BG_IMAGES = [
@@ -27,14 +26,13 @@
   let bgIndex = 0;
   let bgTimer;
 
-  // ── Temporary message (for key feedback) ───────────────────
+  // ── Temporary message ──────────────────────────────────────
   let tempMessage = "";
   let tempMessageTimeout;
 
-  // ── Power state (track locally for toggle) ─────────────────
+  // ── Power state ─────────────────────────────────────────────
   let isSystemPoweredOn = true;
 
-  // ── Native Power Bridge (STB specific) ─────────────────────
   function callNativePowerOff() {
     if (typeof window.powerOff === "function") {
       window.powerOff();
@@ -46,7 +44,6 @@
       window.AndroidTV.powerOff();
     } else {
       showTempMessage("⚠️ Power bridge missing – integrate with STB", true);
-      console.log("No native power bridge found for OFF");
     }
   }
 
@@ -61,7 +58,6 @@
       window.AndroidTV.powerOn();
     } else {
       showTempMessage("⚠️ Power bridge missing – integrate with STB", true);
-      console.log("No native power bridge found for ON");
     }
   }
 
@@ -77,8 +73,7 @@
     }
   }
 
-  // ── Helper: temporary on‑screen message ────────────────────
-  function showTempMessage(msg, isError = false) {
+  function showTempMessage(msg) {
     if (tempMessageTimeout) clearTimeout(tempMessageTimeout);
     tempMessage = msg;
     tempMessageTimeout = setTimeout(() => {
@@ -92,6 +87,13 @@
       push('/login');
       return;
     }
+
+    // Preload background images for instant display
+    BG_IMAGES.forEach(src => {
+      const img = new Image();
+      img.src = src;
+    });
+
     document.addEventListener('keydown', handleKeyDown);
     bgTimer = setInterval(() => {
       bgIndex = (bgIndex + 1) % BG_IMAGES.length;
@@ -104,34 +106,40 @@
     if (tempMessageTimeout) clearTimeout(tempMessageTimeout);
   });
 
-  // ── Keyboard helpers ────────────────────────────────────────
-  function openKeyboard(target) {
+  // ── Keyboard helpers (only for Name) ──────────────────────
+  function openKeyboard() {
     if (document.activeElement && typeof document.activeElement.blur === 'function') {
       document.activeElement.blur();
     }
-    keyboardTarget    = target;
+    keyboardTarget = 'name';
     isKeyboardVisible = true;
     if (keyboard) keyboard.reset();
   }
 
   function closeKeyboard() {
     isKeyboardVisible = false;
-    keyboardTarget    = '';
+    keyboardTarget = '';
   }
 
   function onKeyboardInput(e) {
     const char = e.detail;
     if (char === 'backspace') {
-      if      (keyboardTarget === 'name')  nameValue  = nameValue.slice(0, -1);
-      else if (keyboardTarget === 'age')   ageValue   = ageValue.slice(0, -1);
+      nameValue = nameValue.slice(0, -1);
     } else {
-      if      (keyboardTarget === 'name')  nameValue  += char;
-      else if (keyboardTarget === 'age')   ageValue   += char;
+      nameValue += char;
     }
   }
 
   function onKeyboardConfirm() {
     closeKeyboard();
+  }
+
+  // ── Gender keyboard handler (Enter/Space to toggle) ──────
+  function handleGenderKeydown(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      genderValue = genderValue === 'Male' ? 'Female' : 'Male';
+    }
   }
 
   // ── Full remote control key handling ───────────────────────
@@ -141,16 +149,8 @@
 
     // ── Keys that should work even when keyboard is visible ──
     if (isKeyboardVisible) {
-      if (keyCode === 152) { // POWER
-        e.preventDefault();
-        handlePowerToggle();
-        return;
-      }
-      if (keyCode === 15) { // HOME
-        e.preventDefault();
-        window.location.href = "/launcher/index.html";
-        return;
-      }
+      if (keyCode === 152) { e.preventDefault(); handlePowerToggle(); return; }
+      if (keyCode === 15) { e.preventDefault(); window.location.href = "/launcher/index.html"; return; }
       if (keyCode === 14 || keyCode === 21 || keyCode === 36) {
         e.preventDefault();
         showTempMessage("Not available on this screen");
@@ -196,11 +196,11 @@
     if ((keyCode >= 48 && keyCode <= 57) || (keyCode >= 96 && keyCode <= 105)) {
       let num = String.fromCharCode(keyCode);
       if (keyCode >= 96 && keyCode <= 105) num = String(keyCode - 96);
-      showTempMessage(`Number ${num} – Use virtual keyboard`);
+      showTempMessage(`Number ${num} – Use virtual keyboard for Name only`);
       return;
     }
     if (keyCode >= 65 && keyCode <= 90) {
-      showTempMessage(`Key ${key} – Use virtual keyboard`);
+      showTempMessage(`Key ${key} – Use virtual keyboard for Name only`);
       return;
     }
     const punctMap = {
@@ -208,8 +208,37 @@
       192: "`", 219: "[", 220: "\\", 221: "]", 222: "'"
     };
     if (punctMap[keyCode]) {
-      showTempMessage(`Key ${punctMap[keyCode]} – Use virtual keyboard`);
+      showTempMessage(`Key ${punctMap[keyCode]} – Use virtual keyboard for Name only`);
       return;
+    }
+
+    // ── Age adjustment with ArrowUp/Down (when age is focused) ──
+    if (focusKey === 'age') {
+      if (key === 'ArrowUp') {
+        ageValue = Math.min(120, ageValue + 1);
+        return;
+      }
+      if (key === 'ArrowDown') {
+        ageValue = Math.max(1, ageValue - 1);
+        return;
+      }
+      // Move focus left/right from age
+      if (key === 'ArrowLeft') {
+        focusKey = 'name';
+        return;
+      }
+      if (key === 'ArrowRight') {
+        focusKey = 'gender';
+        return;
+      }
+    }
+
+    // ── Gender toggle with Left/Right (when gender is focused) ──
+    if (focusKey === 'gender') {
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        genderValue = genderValue === 'Male' ? 'Female' : 'Male';
+        return;
+      }
     }
 
     // ── Navigation inside form ────────────────────────────────
@@ -219,52 +248,45 @@
     switch (key) {
       case 'ArrowDown':
         if (focusKey === 'name') focusKey = 'age';
-        else if (focusKey === 'age') focusKey = 'gender_male';
-        else if (focusKey === 'gender_male') focusKey = 'gender_female';
-        else if (focusKey === 'gender_female') focusKey = 'save';
+        else if (focusKey === 'age') focusKey = 'gender';
+        else if (focusKey === 'gender') focusKey = 'save';
         else if (focusKey === 'save') focusKey = 'cancel';
         break;
       case 'ArrowUp':
         if (focusKey === 'age') focusKey = 'name';
-        else if (focusKey === 'gender_male') focusKey = 'age';
-        else if (focusKey === 'gender_female') focusKey = 'gender_male';
-        else if (focusKey === 'save') focusKey = 'gender_female';
+        else if (focusKey === 'gender') focusKey = 'age';
+        else if (focusKey === 'save') focusKey = 'gender';
         else if (focusKey === 'cancel') focusKey = 'save';
         break;
       case 'ArrowLeft':
-        if (focusKey === 'gender_female') focusKey = 'gender_male';
+        if (focusKey === 'save') focusKey = 'gender';
         else if (focusKey === 'cancel') focusKey = 'save';
         break;
       case 'ArrowRight':
-        if (focusKey === 'gender_male') focusKey = 'gender_female';
+        if (focusKey === 'name') focusKey = 'age';
         else if (focusKey === 'save') focusKey = 'cancel';
         break;
       case 'Enter':
         handleFieldEnter();
         break;
       case 'Backspace':
-        handleBackspace();
+        if (focusKey === 'name') {
+          nameValue = nameValue.slice(0, -1);
+        }
         break;
     }
   }
 
   function handleFieldEnter() {
-    if (focusKey === 'name' || focusKey === 'age') {
-      openKeyboard(focusKey);
-    } else if (focusKey === 'gender_male') {
-      genderValue = 'Male';
-    } else if (focusKey === 'gender_female') {
-      genderValue = 'Female';
+    if (focusKey === 'name') {
+      openKeyboard();
     } else if (focusKey === 'save') {
       handleSave();
     } else if (focusKey === 'cancel') {
       handleCancel();
+    } else if (focusKey === 'gender') {
+      genderValue = genderValue === 'Male' ? 'Female' : 'Male';
     }
-  }
-
-  function handleBackspace() {
-    if (focusKey === 'name') nameValue = nameValue.slice(0, -1);
-    else if (focusKey === 'age') ageValue = ageValue.slice(0, -1);
   }
 
   function handleSave() {
@@ -275,7 +297,7 @@
     const newProfile = {
       id: Date.now().toString(),
       name: nameValue.trim(),
-      age: ageValue.trim(),
+      age: String(ageValue),
       gender: genderValue,
       image: '/images/appstore/profile/Avatar16.png',
     };
@@ -301,7 +323,7 @@
   <!-- Full screen background -->
   <div class="background-container">
     {#each BG_IMAGES as src, i}
-      <img {src} alt="Background {i+1}" class="bg-slider-image" class:active={bgIndex === i} />
+      <img {src} alt="Background {i+1}" class="bg-slider-image" class:active={bgIndex === i} loading="eager" />
     {/each}
     <div class="overlay"></div>
   </div>
@@ -311,36 +333,49 @@
     <div class="profile-group">
       <h2 class="create-title">Create Profile</h2>
 
-      <!-- Name (same border as others) -->
-      <button class="input-wrapper" class:focused={focusKey === 'name' && !isKeyboardVisible}
-              on:click={() => openKeyboard('name')} tabindex="0">
+      <!-- Name -->
+      <button
+        class="input-wrapper name-wrapper"
+        class:focused={focusKey === 'name' && !isKeyboardVisible}
+        on:click={openKeyboard}
+        on:focus={() => focusKey = 'name'}
+        tabindex="0"
+      >
         <input type="text" placeholder="Name" value={nameValue} readonly />
       </button>
 
-      <!-- Age (same border) -->
-      <button class="input-wrapper" class:focused={focusKey === 'age' && !isKeyboardVisible}
-              on:click={() => openKeyboard('age')} tabindex="0">
+      <!-- Age -->
+      <button
+        class="input-wrapper age-wrapper"
+        class:focused={focusKey === 'age' && !isKeyboardVisible}
+        on:focus={() => focusKey = 'age'}
+        tabindex="0"
+      >
         <input type="text" placeholder="Age" value={ageValue} readonly />
+        <span class="age-hint">▲/▼  ◄/►</span>
       </button>
 
-      <!-- Gender buttons – each has identical border & full width (stacked) -->
-      <button class="gender-btn" class:selected={genderValue === 'Male'}
-              class:focused={focusKey === 'gender_male' && !isKeyboardVisible}
-              on:click={() => { genderValue = 'Male'; }} tabindex="0">
-        Male
-      </button>
-      <button class="gender-btn" class:selected={genderValue === 'Female'}
-              class:focused={focusKey === 'gender_female' && !isKeyboardVisible}
-              on:click={() => { genderValue = 'Female'; }} tabindex="0">
-        Female
-      </button>
+      <!-- Gender toggle -->
+      <div
+        class="gender-selector"
+        class:focused={focusKey === 'gender' && !isKeyboardVisible}
+        tabindex="0"
+        role="button"
+        aria-label="Toggle gender"
+        on:focus={() => focusKey = 'gender'}
+        on:click={() => { genderValue = genderValue === 'Male' ? 'Female' : 'Male'; }}
+        on:keydown={handleGenderKeydown}
+      >
+        <span class="gender-option" class:active={genderValue === 'Male'}>Male</span>
+        <span class="gender-option" class:active={genderValue === 'Female'}>Female</span>
+      </div>
 
-      <!-- Action buttons with same border treatment -->
+      <!-- Action buttons -->
       <div class="action-buttons">
         <button class="action-btn save" class:focused={focusKey === 'save' && !isKeyboardVisible}
-                on:click={handleSave} tabindex="0">Save</button>
+                on:click={handleSave} on:focus={() => focusKey = 'save'} tabindex="0">Save</button>
         <button class="action-btn cancel" class:focused={focusKey === 'cancel' && !isKeyboardVisible}
-                on:click={handleCancel} tabindex="0">Cancel</button>
+                on:click={handleCancel} on:focus={() => focusKey = 'cancel'} tabindex="0">Cancel</button>
       </div>
     </div>
   </div>
@@ -351,7 +386,7 @@
   <div class="temp-message">{tempMessage}</div>
 {/if}
 
-<!-- Virtual keyboard -->
+<!-- Virtual keyboard (only for Name) -->
 <VirtualKeyboard bind:this={keyboard} visible={isKeyboardVisible} active={isKeyboardVisible}
                  on:input={onKeyboardInput} on:confirm={onKeyboardConfirm} />
 
@@ -362,7 +397,7 @@
     display: flex;
     justify-content: flex-start;
     align-items: center;
-    background-color: #020202;
+    background-color: #020202;  /* fallback – no white flash */
     position: relative;
     overflow: hidden;
   }
@@ -382,11 +417,9 @@
     height: 100%;
     opacity: 0;
     transition: opacity 1.5s ease-in-out;
+    will-change: opacity;  /* GPU acceleration for smooth fades */
   }
-
-  .bg-slider-image.active {
-    opacity: 1;
-  }
+  .bg-slider-image.active { opacity: 1; }
 
   .overlay {
     position: absolute;
@@ -427,24 +460,25 @@
     width: 100%;
   }
 
-  /* ── ALL buttons (Name, Age, Male, Female, Save, Cancel) share same border style ── */
-  .input-wrapper, .gender-btn {
-    width: 100%;               /* Full width, consistent */
+  /* ── All input wrappers, gender selector, and action buttons share equal spacing ── */
+  .input-wrapper,
+  .gender-selector {
+    width: 100%;
     height: 50px;
     background-color: rgba(255,255,255,0.1);
-    border: 4px solid #888;    /* Thick, same for all */
+    border: 4px solid #888;
     border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.25s ease-in-out;
     cursor: pointer;
-    margin-bottom: 16px;       /* Consistent spacing */
-  }
-
-  /* Remove extra margin from last button before action-buttons */
-  .gender-btn:last-of-type {
-    margin-bottom: 20px;
+    margin-bottom: 16px;        /* equal gap between all fields */
+    position: relative;
+    background: none;
+    font: inherit;
+    color: inherit;
+    padding: 0;
   }
 
   .input-wrapper input {
@@ -458,33 +492,56 @@
     width: 100%;
     pointer-events: none;
   }
-
   .input-wrapper input::placeholder {
     color: rgba(255,255,255,0.5);
   }
 
-  /* Focus effect (identical for all) */
-  .input-wrapper.focused, .gender-btn.focused, .action-btn.focused {
+  .input-wrapper.focused,
+  .gender-selector.focused,
+  .action-btn.focused {
     border-color: #e1001e;
     transform: scale(1.02);
     box-shadow: 0 0 18px rgba(225,0,30,0.6);
   }
 
-  /* Gender button selected state (keep border same, just background change) */
-  .gender-btn.selected {
-    background-color: #e1001e;
-    border-color: #e1001e;
+  .age-wrapper .age-hint {
+    position: absolute;
+    right: 12px;
+    color: rgba(255,255,255,0.3);
+    font-size: 12px;
+    letter-spacing: 1px;
   }
 
-  /* Action buttons container */
+  /* ─── Gender selector ───────────────────────────────────── */
+  .gender-selector {
+    padding: 2px;
+    margin-bottom: 16px;        /* same as others */
+  }
+  .gender-option {
+    flex: 1;
+    text-align: center;
+    padding: 10px 0;
+    font-size: 16px;
+    font-weight: 500;
+    color: #888;
+    background: transparent;
+    border-radius: 8px;
+    transition: all 0.25s;
+  }
+  .gender-option.active {
+    background: #e1001e;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(225,0,30,0.4);
+  }
+
+  /* ─── Action buttons ────────────────────────────────────── */
   .action-buttons {
     display: flex;
     width: 100%;
     justify-content: space-between;
     gap: 16px;
-    margin-top: 8px;
+    margin-top: 16px;          /* equal gap from the last field */
   }
-
   .action-btn {
     flex: 1;
     height: 50px;
@@ -500,22 +557,10 @@
     align-items: center;
     justify-content: center;
   }
+  .action-btn.save { background-color: #27ae60; }
+  .action-btn.cancel { background-color: #c0392b; }
 
-  .action-btn.save {
-    background-color: #27ae60;
-  }
-
-  .action-btn.cancel {
-    background-color: #c0392b;
-  }
-
-  /* Override focus for action buttons – same as others */
-  .action-btn.focused {
-    border-color: #e1001e;
-    transform: scale(1.02);
-    box-shadow: 0 0 18px rgba(225,0,30,0.6);
-  }
-
+  /* ─── Temp message ──────────────────────────────────────── */
   .temp-message {
     position: fixed;
     bottom: 80px;
@@ -532,5 +577,17 @@
     border-left: 4px solid #e50914;
     white-space: nowrap;
     pointer-events: none;
+  }
+
+  /* ─── Responsive ────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .profile-panel { width: 40%; padding: 20px 12px 30px; }
+    .create-title { font-size: 26px; }
+  }
+  @media (max-width: 480px) {
+    .profile-panel { width: 55%; padding: 16px 10px 20px; }
+    .create-title { font-size: 22px; }
+    .input-wrapper, .gender-selector, .action-btn { height: 44px; }
+    .action-buttons { gap: 10px; }
   }
 </style>

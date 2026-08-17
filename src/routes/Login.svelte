@@ -116,6 +116,10 @@
     try {
       const token = await loginUser(username, password);
       setAuth(token, username);
+      
+      // ─── ✅ CRUCIAL: Set flag to trigger auto-fullscreen on profile page ───
+      sessionStorage.setItem("from_login", "true");
+
       push("/profile");
     } catch (err) {
       errorMessage = err.message || "Login failed.";

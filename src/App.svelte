@@ -3,7 +3,7 @@
   import { wrap } from 'svelte-spa-router/wrap';
   import Login from './routes/Login.svelte';
   import ProfileSelect from './routes/ProfileSelect.svelte';
-  import CreateProfile from './routes/CreateProfile.svelte';
+  import ProfileForm from './routes/ProfileForm.svelte';   // ← కొత్తది
   import Home from './routes/Home.svelte';
   import PlayerScreen from './routes/PlayerScreen.svelte';
   import ExitScreen from './routes/ExitScreen.svelte';
@@ -12,9 +12,8 @@
   import { authToken } from './stores/appStore.js';
   import { push } from 'svelte-spa-router';
 
-  let otaPopup; // bind:this handle — lets any screen call otaPopup.triggerCheck(true)
+  let otaPopup;
 
-  // Guard: redirect to /login if not authenticated
   function requireAuth() {
     if (!localStorage.getItem('ulka_token')) {
       push('/login');
@@ -23,7 +22,6 @@
     return true;
   }
 
-  // Guard: check token at root to go to profile or login
   function checkRootAuth() {
     if (localStorage.getItem('ulka_token')) {
       push('/profile');
@@ -33,7 +31,6 @@
     return false;
   }
 
-  // Guard: redirect to /profile if no profile selected this session
   function requireProfile() {
     if (!requireAuth()) return false;
     if (!sessionStorage.getItem('ulka_profile_selected')) {
@@ -43,22 +40,21 @@
     return true;
   }
 
-  // Route map
-  // Flow: / (login) → /profile (who's watching) → /home (dashboard)
-  // On every refresh: user must pick a profile before reaching /home
   const routes = {
     '/':                wrap({ component: Login, conditions: [checkRootAuth] }),
     '/login':           Login,
     '/profile':         wrap({ component: ProfileSelect, conditions: [requireAuth] }),
-    '/create-profile':  wrap({ component: CreateProfile, conditions: [requireAuth] }),
+    '/create-profile':  wrap({ component: ProfileForm, conditions: [requireAuth] }),
+    '/edit-profile/:id': wrap({ component: ProfileForm, conditions: [requireAuth] }),  // ← id తో
     '/home':            wrap({ component: Home, conditions: [requireProfile] }),
     '/player':          wrap({ component: PlayerScreen, conditions: [requireProfile] }),
     '/exit':            wrap({ component: ExitScreen, conditions: [requireAuth] }),
-    '*':                Login,    // fallback → login
+    '*':                Login,
   };
 
-  // Pages that should NOT show the StatusBar
-  $: hideStatusBar = ['/', '/login', '/profile', '/create-profile', '/player', '/exit'].includes($location);
+  // StatusBar దాచడం – edit-profile కూడా
+  $: hideStatusBar = ['/', '/login', '/profile', '/create-profile', '/player', '/exit'].some(route => $location === route) ||
+                     $location.startsWith('/edit-profile');
 </script>
 
 {#if !hideStatusBar}
@@ -67,5 +63,4 @@
 
 <Router {routes} />
 
-<!-- OTA update popup — lives at app root so it appears over any route -->
 <OtaUpdatePopup bind:this={otaPopup} />

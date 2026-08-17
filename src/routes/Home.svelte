@@ -1,4 +1,4 @@
-<!-- Home.svelte (Favorites replace EPG in fullscreen - No dropdown) -->
+<!-- Home.svelte (Favorites + Recent replace EPG in fullscreen) -->
 <script>
   import { onMount, onDestroy, tick } from "svelte";
   import { API_HOST } from "../lib/constants.js";
@@ -50,36 +50,68 @@
   let isAutoFullscreen = false;
   let fullscreenLock = false;
   let autoFullscreenRequested = false;
+  let autoFullscreenPending = false;
+  let autoFullscreenTransition = false;
 
-  // ─── FAVORITES MODAL STATE (for viewing) ─────────────────────
-  let favoritesModalOpen = false;
-  let favoritesModalFocusedIdx = 0;
+  // ─── FAVORITE PANEL ──────────────────────────────────────────
+  let favoritePanelOpen = false;
+  let favoritePanelFocused = 0;        // 0 = left card (toggle button), 1+ = strip items
+  let favStripFocusedIdx = -1;         // index inside the strip
+  let showFavStrip = true;            // always visible when panel is open
 
+  // ─── RECENT MODAL ────────────────────────────────────────────
+  let recentModalOpen = false;
+  let recentModalFocusedIdx = 0;
+  let recentChannels = [];
+
+  // ─── BUTTONS — NEW ORDER: Recent, Fullscreen, Favorite, Record, Audio ──
   const allButtons = [
+    { label: 'Recent', iconPath: '/images/appstore/ottapps/recent.png', action: 6 },
     { label: 'Fullscreen', iconPath: '/images/appstore/ottapps/fullscreen.png', action: 0 },
     { label: 'Favorite', iconPath: '/images/appstore/ottapps/favariote.png', action: 1 },
     { label: 'Record', iconPath: '/images/appstore/ottapps/recard.png', action: 2 },
     { label: 'Audio', iconPath: '/images/appstore/ottapps/audio.png', action: 3 },
   ];
-  $: visibleButtons = isFullscreen ? allButtons.slice(1) : allButtons;
+  $: visibleButtons = isFullscreen ? allButtons.filter(b => b.action !== 0) : allButtons;
 
   $: previewChannel = $activeSection === "channels" ? ($filteredChannels[$focusedIdx] ?? null) : null;
-  $: epgChannel = isFullscreen ? $playingChannel : (previewChannel || $playingChannel);
+  $: epgChannel = isFullscreen ? $playingChannel : ($playingChannel || previewChannel);
   $: updateFocusedEpg(epgChannel);
 
   let channelsExpanded = true;
 
-  // ─── REACTIVE: is current channel favorited? ──────────────
   $: isFav = $playingChannel && $favorites.some(f => f.id === $playingChannel.id);
+
+  // ─── Recent channels ──────────────────────────────────────────
+  function loadRecentChannels() {
+    const stored = localStorage.getItem("recent_channels");
+    if (stored) {
+      try { recentChannels = JSON.parse(stored); } catch(e) { recentChannels = []; }
+    } else {
+      recentChannels = [];
+    }
+  }
+  function saveRecentChannels() {
+    localStorage.setItem("recent_channels", JSON.stringify(recentChannels));
+  }
+  function addToRecent(channel) {
+    if (!channel) return;
+    recentChannels = recentChannels.filter(c => c.id !== channel.id);
+    recentChannels.unshift(channel);
+    if (recentChannels.length > 10) recentChannels = recentChannels.slice(0, 10);
+    saveRecentChannels();
+  }
 
   function resetEpgTimer() {
     if (epgTimer) clearTimeout(epgTimer);
     epgTimer = null;
-    if (isFullscreen) {
-      epgVisible = true;
-      epgTimer = setTimeout(() => { epgVisible = false; epgTimer = null; }, 10000);
-    } else {
-      epgVisible = true;
+    if (!autoFullscreenTransition) {
+      if (isFullscreen) {
+        epgVisible = true;
+        epgTimer = setTimeout(() => { epgVisible = false; epgTimer = null; }, 10000);
+      } else {
+        epgVisible = true;
+      }
     }
   }
 
@@ -88,28 +120,57 @@
     localStorage.setItem('selected_lang', $selectedLang);
   }
 
-  let autoFullscreenPending = false;
   let autoFullscreenTimer = null;
 
+  // ─── FIX: Only reset when NOT in fullscreen ───────────────────
   $: {
-    if (!isInitialLoad && $playingChannel) {
+    if (!isInitialLoad && $playingChannel && !isFullscreen) {
       activeSection.set('channels');
       overlayFocusedIdx = -1;
     }
   }
 
-  onMount(async () => {
-    const storedFavs = localStorage.getItem('favorites');
-    if (storedFavs) {
-      try { favorites.set(JSON.parse(storedFavs)); } catch(e) {}
+  // ════════════════════════════════════════════════════════════════
+  // ║  SMART HELPERS: Match by ID or Name
+  // ════════════════════════════════════════════════════════════════
+  function findCategoryIndex(value) {
+    if (value === undefined || value === null || $categories.length === 0) return -1;
+    if (!isNaN(Number(value))) {
+      const idx = $categories.findIndex(c => Number(c.id) === Number(value));
+      if (idx !== -1) return idx;
     }
+    const searchName = String(value).toLowerCase().trim();
+    const idx = $categories.findIndex(c => c.name && c.name.toLowerCase().trim() === searchName);
+    return idx;
+  }
+
+  function findLanguageIndex(value) {
+    if (value === undefined || value === null || $languages.length === 0) return -1;
+    if (!isNaN(Number(value))) {
+      const idx = $languages.findIndex(l => Number(l.id) === Number(value));
+      if (idx !== -1) return idx;
+    }
+    const searchName = String(value).toLowerCase().trim();
+    const idx = $languages.findIndex(l => l.name && l.name.toLowerCase().trim() === searchName);
+    return idx;
+  }
+
+  onMount(async () => {
+    loadRecentChannels();
 
     const autoFS = sessionStorage.getItem('auto_fullscreen');
     if (autoFS === 'true') {
       sessionStorage.removeItem('auto_fullscreen');
       isAutoFullscreen = true;
-      autoFullscreenRequested = false;
       autoFullscreenPending = true;
+      autoFullscreenRequested = false;
+      autoFullscreenTransition = true;
+      epgVisible = false;
+    }
+
+    const storedFavs = localStorage.getItem('favorites');
+    if (storedFavs) {
+      try { favorites.set(JSON.parse(storedFavs)); } catch(e) {}
     }
 
     statusMsg.set({ text: "Fetching categories & languages...", isError: false });
@@ -180,13 +241,9 @@
           updateFocusedEpg(targetChannel);
           await tick();
 
-          epgVisible = true;
-          if (epgTimer) clearTimeout(epgTimer);
-          epgTimer = null;
-
+          epgVisible = false;
           autoFullscreenRequested = true;
           autoFullscreenPending = false;
-
           isAutoFullscreen = true;
           await tick();
           await new Promise(resolve => setTimeout(resolve, 50));
@@ -194,15 +251,34 @@
           if (document.fullscreenElement) {
             activeSection.set('overlay');
             overlayFocusedIdx = 0;
-            resetEpgTimer();
+            setTimeout(() => {
+              autoFullscreenTransition = false;
+              epgVisible = true;
+              resetEpgTimer();
+            }, 500);
           } else {
             if (!fullscreenRequestInProgress) {
               openFullPlayerScreen(true);
+              setTimeout(() => {
+                autoFullscreenTransition = false;
+                epgVisible = true;
+                resetEpgTimer();
+              }, 800);
             }
           }
+        } else {
+          isAutoFullscreen = false;
+          autoFullscreenPending = false;
+          autoFullscreenTransition = false;
+          epgVisible = true;
+          await tick();
+          activeSection.set('languages');
+          const langIdx = $selectedLang !== undefined && $selectedLang !== null ? $selectedLang : 0;
+          focusedIdx.set(langIdx);
+          await tick();
+          scrollToFocused();
         }
       }
-
     } catch (e) {
       console.error(e);
       statusMsg.set({ text: "Error loading channels", isError: true });
@@ -222,8 +298,6 @@
       }
     }, 60000);
 
-    resetEpgTimer();
-
     if (!isAutoFullscreen) {
       await tick();
       activeSection.set('languages');
@@ -231,6 +305,7 @@
       focusedIdx.set(langIdx);
       await tick();
       scrollToFocused();
+      resetEpgTimer();
     }
 
     isInitialLoad = false;
@@ -249,6 +324,9 @@
     if (autoFullscreenTimer) clearTimeout(autoFullscreenTimer);
   });
 
+  // ════════════════════════════════════════════════════════════════
+  // ║  handleFullscreenChange
+  // ════════════════════════════════════════════════════════════════
   async function handleFullscreenChange() {
     isFullscreen = !!document.fullscreenElement;
     if (isFullscreen) {
@@ -262,35 +340,55 @@
         activeSection.set('overlay');
         overlayFocusedIdx = 0;
       }
-      resetEpgTimer();
+      if (autoFullscreenTransition) {
+        autoFullscreenTransition = false;
+        epgVisible = true;
+        resetEpgTimer();
+      } else {
+        resetEpgTimer();
+      }
     } else {
       isAutoFullscreen = false;
       autoFullscreenRequested = false;
-      // Close favorites modal when exiting fullscreen
-      favoritesModalOpen = false;
+      autoFullscreenTransition = false;
+      favoritePanelOpen = false;
+      showFavStrip = true;
+      recentModalOpen = false;
+
       const ch = $playingChannel;
       if (ch) {
-        if (ch.category_id !== undefined && $categories.length > 0) {
-          const catIdx = $categories.findIndex(c => c.id === ch.category_id);
-          if (catIdx !== -1) selectedCat.set(catIdx);
-        }
-        if (ch.language_id !== undefined && $languages.length > 0) {
-          const langIdx = $languages.findIndex(l => l.id === ch.language_id);
-          if (langIdx !== -1) selectedLang.set(langIdx);
-        }
+        const catValue = ch.category_id || ch.category;
+        const langValue = ch.language_id || ch.language;
+        const catIdx = findCategoryIndex(catValue);
+        const langIdx = findLanguageIndex(langValue);
+        if (catIdx !== -1) selectedCat.set(catIdx);
+        if (langIdx !== -1) selectedLang.set(langIdx);
         await tick();
         const idx = $filteredChannels.findIndex(c => c.id === ch.id);
         if (idx !== -1) focusedIdx.set(idx);
         else if ($filteredChannels.length > 0) focusedIdx.set(0);
+        await tick();
+        setTimeout(() => {
+          activeSection.set("channels");
+          overlayFocusedIdx = -1;
+          scrollToFocused();
+          resetEpgTimer();
+        }, 150);
       } else {
         focusedIdx.set(0);
+        activeSection.set("channels");
+        overlayFocusedIdx = -1;
+        setTimeout(() => {
+          scrollToFocused();
+          resetEpgTimer();
+        }, 150);
       }
       if (epgTimer) clearTimeout(epgTimer);
       epgTimer = null;
       epgVisible = true;
-      activeSection.set("channels");
-      overlayFocusedIdx = -1;
-      scrollToFocused();
+      if ($playingChannel) {
+        updateFocusedEpg($playingChannel);
+      }
     }
   }
 
@@ -390,20 +488,28 @@
       isLoadingEpg = false;
       return;
     }
-    currentProgram = {
-      title: 'Loading EPG...',
-      programstart: new Date().toISOString(),
-      programend: new Date(Date.now() + 30 * 60000).toISOString(),
-      description: 'Fetching program guide...'
-    };
-    upcomingPrograms = [];
-    isLoadingEpg = true;
+    if (autoFullscreenTransition) {
+      currentProgram = null;
+      upcomingPrograms = [];
+      isLoadingEpg = false;
+    } else {
+      currentProgram = {
+        title: 'Loading EPG...',
+        programstart: new Date().toISOString(),
+        programend: new Date(Date.now() + 30 * 60000).toISOString(),
+        description: 'Fetching program guide...'
+      };
+      upcomingPrograms = [];
+      isLoadingEpg = true;
+    }
     fetchEPG([chNum]).then(ok => {
       isLoadingEpg = false;
       if (ok && displayChannelNum === chNum) {
-        currentProgram = getCurrentProgram(chNum);
-        upcomingPrograms = getUpcomingPrograms(chNum, 3);
-        if (!currentProgram) {
+        const prog = getCurrentProgram(chNum);
+        if (prog) {
+          currentProgram = prog;
+          upcomingPrograms = getUpcomingPrograms(chNum, 3);
+        } else {
           currentProgram = {
             title: 'No program data',
             programstart: new Date().toISOString(),
@@ -419,6 +525,9 @@
           description: 'Failed to load program guide'
         };
       }
+      if (isFullscreen && !autoFullscreenTransition) {
+        epgVisible = true;
+      }
     });
   }
 
@@ -426,7 +535,9 @@
     if (!channel || !channel.channel_number) return;
     const channelNumber = parseInt(channel.channel_number);
     if (epgCache[channelNumber] && epgCache[channelNumber].length > 0) return;
-    isLoadingEpg = true;
+    if (!autoFullscreenTransition) {
+      isLoadingEpg = true;
+    }
     await fetchEPG([channelNumber]);
     isLoadingEpg = false;
     if (epgChannel && parseInt(epgChannel.channel_number) === channelNumber) {
@@ -458,7 +569,10 @@
       return;
     }
     if (document.fullscreenElement) {
-      if (setOverlayFocus) { activeSection.set('overlay'); overlayFocusedIdx = 0; }
+      if (setOverlayFocus) {
+        activeSection.set('overlay');
+        overlayFocusedIdx = 0;
+      }
       resetEpgTimer();
       return;
     }
@@ -510,14 +624,13 @@
     }
   }
 
-  // ─── FAVORITES HANDLER ──────────────────────────────────────
-  function toggleFavoriteAndShowGrid() {
+  // ─── FAVORITE PANEL HANDLER ──────────────────────────────────
+  function toggleFavoriteAndShowPanel() {
     if (!$playingChannel) {
       showToastMessage("Select a channel first", true);
       return;
     }
 
-    // Toggle favorite status
     if (isFav) {
       $favorites = $favorites.filter(f => f.id !== $playingChannel.id);
       showToastMessage(`🗑️ Removed ${$playingChannel.title} from favorites`, false);
@@ -526,19 +639,49 @@
       showToastMessage(`⭐ Added ${$playingChannel.title} to favorites`, false);
     }
 
-    // If in fullscreen, show/hide the favorites grid
     if (isFullscreen) {
-      if ($favorites.length > 0) {
-        favoritesModalOpen = true;
-        favoritesModalFocusedIdx = 0;
-        activeSection.set('favorites-modal');
-      } else {
-        favoritesModalOpen = false;
-        activeSection.set('overlay');
-        const favIdx = visibleButtons.findIndex(b => b.action === 1);
-        overlayFocusedIdx = favIdx >= 0 ? favIdx : 0;
-      }
+      favoritePanelOpen = true;
+      favoritePanelFocused = 0;
+      favStripFocusedIdx = -1;
+      showFavStrip = true;
+      activeSection.set('favorite-panel');
       resetEpgTimer();
+    }
+  }
+
+  // ─── RECENT HANDLER ──────────────────────────────────────────
+  function openRecentGrid() {
+    if (recentChannels.length === 0) {
+      showToastMessage("No recent channels", true);
+      return;
+    }
+    if (isFullscreen) {
+      recentModalOpen = true;
+      recentModalFocusedIdx = 0;
+      activeSection.set('recent-modal');
+      resetEpgTimer();
+    } else {
+      recentModalOpen = true;
+      recentModalFocusedIdx = 0;
+      activeSection.set('recent-modal');
+      resetEpgTimer();
+    }
+  }
+
+  function closeRecentModal() {
+    recentModalOpen = false;
+    activeSection.set('overlay');
+    const recentIdx = visibleButtons.findIndex(b => b.action === 6);
+    overlayFocusedIdx = recentIdx >= 0 ? recentIdx : 0;
+    resetEpgTimer();
+  }
+
+  function selectRecentChannel(index) {
+    const channel = recentChannels[index];
+    if (channel) {
+      recentModalOpen = false;
+      activeSection.set('overlay');
+      handleChannelActivation(channel);
     }
   }
 
@@ -547,31 +690,78 @@
     switch (action) {
       case 0: openFullPlayerScreen(); break;
       case 1:
-        // Direct toggle + show grid (no dropdown)
-        toggleFavoriteAndShowGrid();
+        if (!$playingChannel) {
+          showToastMessage("Select a channel first", true);
+          return;
+        }
+        if (isFullscreen) {
+          favoritePanelOpen = true;
+          favoritePanelFocused = 0;
+          favStripFocusedIdx = -1;
+          showFavStrip = true;
+          activeSection.set('favorite-panel');
+          resetEpgTimer();
+        }
         break;
+      case 6: openRecentGrid(); break;
       case 2: showToastMessage("⏺️ Recording started...", false); break;
       case 3: activeSection.set('audio'); focusedLangIdx = 0; break;
       default: break;
     }
   }
 
-  // ─── FAVORITES MODAL: select a favorite channel ──────────────
-  function selectFavoriteChannel(index) {
+  // ─── FAVORITE PANEL: select a favorite channel from strip ──
+  function selectFavoriteFromStrip(index) {
     const channel = $favorites[index];
     if (channel) {
-      favoritesModalOpen = false;
+      favoritePanelOpen = false;
+      showFavStrip = true;
       activeSection.set('overlay');
       handleChannelActivation(channel);
     }
   }
 
-  function closeFavoritesModal() {
-    favoritesModalOpen = false;
+  function closeFavoritePanel() {
+    favoritePanelOpen = false;
+    showFavStrip = true;
     activeSection.set('overlay');
     const favIdx = visibleButtons.findIndex(b => b.action === 1);
     overlayFocusedIdx = favIdx >= 0 ? favIdx : 0;
     resetEpgTimer();
+  }
+
+  // ─── NEW: Scroll strip to focused item ──────────────────────
+  function scrollStripToFocused() {
+    if (favStripFocusedIdx < 0) return;
+    tick().then(() => {
+      const strip = document.querySelector('.fav-panel-strip');
+      if (!strip) return;
+      const items = strip.querySelectorAll('.fav-strip-item');
+      if (items && items[favStripFocusedIdx]) {
+        items[favStripFocusedIdx].scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'center'
+        });
+      }
+    });
+  }
+
+  // ─── Scroll Recent Grid to focused item ─────────────────────
+  function scrollRecentToFocused() {
+    if (recentModalFocusedIdx < 0) return;
+    tick().then(() => {
+      const container = document.querySelector('.favorites-grid-scroll-fullscreen');
+      if (!container) return;
+      const items = container.querySelectorAll('.fav-grid-item-fullscreen');
+      if (items && items[recentModalFocusedIdx]) {
+        items[recentModalFocusedIdx].scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'center'
+        });
+      }
+    });
   }
 
   function selectLanguage(index) {
@@ -588,23 +778,80 @@
     if (channelNumberTimeout) { clearTimeout(channelNumberTimeout); channelNumberTimeout = null; }
   }
 
-  function switchToChannelByNumber(channelNumber) {
-    const list = isFullscreen ? $allChannels : $filteredChannels;
-    const channel = list.find(ch => parseInt(ch.channel_number) === parseInt(channelNumber));
+  // ════════════════════════════════════════════════════════════════
+  // ║  switchToChannelByNumber (Smart matching)
+  async function switchToChannelByNumber(channelNumber) {
+    const channel = $allChannels.find(ch => parseInt(ch.channel_number) === parseInt(channelNumber));
     if (channel) {
-      const index = list.findIndex(ch => parseInt(ch.channel_number) === parseInt(channelNumber));
+      const catValue = channel.category_id || channel.category;
+      const langValue = channel.language_id || channel.language;
+      const catIdx = findCategoryIndex(catValue);
+      const langIdx = findLanguageIndex(langValue);
+      if (catIdx !== -1) selectedCat.set(catIdx);
+      if (langIdx !== -1) selectedLang.set(langIdx);
+      await tick();
+      const index = $filteredChannels.findIndex(ch => parseInt(ch.channel_number) === parseInt(channelNumber));
       if (index !== -1) {
         focusedIdx.set(index);
-        playingChannel.set(channel);
-        localStorage.setItem('last_channel_id', channel.id);
-        statusMsg.set({ text: `${channel.channel_number}- ${channel.title}`, isError: false });
-        loadEPGForChannel(channel);
-        channelNumberInput = "";
-        showChannelNumberInput = false;
-        clearChannelNumberTimeout();
-        resetEpgTimer();
-        return true;
+        await tick();
+        setTimeout(() => {
+          activeSection.set("channels");
+          overlayFocusedIdx = -1;
+          scrollToFocused();
+        }, 100);
+      } else if ($filteredChannels.length > 0) {
+        focusedIdx.set(0);
+        await tick();
+        setTimeout(() => {
+          activeSection.set("channels");
+          overlayFocusedIdx = -1;
+          scrollToFocused();
+        }, 100);
       }
+      playingChannel.set(channel);
+      localStorage.setItem('last_channel_id', channel.id);
+      statusMsg.set({ text: `${channel.channel_number} - ${channel.title}`, isError: false });
+      loadEPGForChannel(channel);
+      addToRecent(channel);
+      channelNumberInput = "";
+      showChannelNumberInput = false;
+      clearChannelNumberTimeout();
+      resetEpgTimer(); // ensures overlay is visible
+
+      // ─── If not in fullscreen, request it, then focus Recent after a delay ───
+      if (!document.fullscreenElement) {
+        await tick();
+        playingChannel.set(channel);
+        await tick();
+        openFullPlayerScreen(true); // enters fullscreen and sets overlay
+
+        // Wait a bit for fullscreen to enter and overlay to render
+        setTimeout(() => {
+          // Only re-apply if still in fullscreen and same channel
+          if (document.fullscreenElement && $playingChannel?.id === channel.id) {
+            epgVisible = true;
+            activeSection.set('overlay');
+            overlayFocusedIdx = 0;
+          }
+        }, 300);
+      } else {
+        // ─── Already in fullscreen: update index and focus after delay ───
+        const fullIdx = $allChannels.findIndex(c => c.id === channel.id);
+        if (fullIdx !== -1) focusedIdx.set(fullIdx);
+
+        // Ensure EPG overlay is visible
+        epgVisible = true;
+        if (epgTimer) clearTimeout(epgTimer);
+        epgTimer = setTimeout(() => { epgVisible = false; epgTimer = null; }, 10000);
+
+        // Wait for DOM update then set focus after a small delay
+        await tick();
+        setTimeout(() => {
+          overlayFocusedIdx = 0;
+          activeSection.set('overlay');
+        }, 150);
+      }
+      return true;
     } else {
       statusMsg.set({ text: `Channel ${channelNumber} not found`, isError: true });
       setTimeout(() => {
@@ -615,8 +862,8 @@
       channelNumberInput = "";
       showChannelNumberInput = false;
       clearChannelNumberTimeout();
+      return false;
     }
-    return false;
   }
 
   function handleNumberInput(number) {
@@ -639,7 +886,10 @@
     }, 2000);
   }
 
-  function channelUp() {
+  // ════════════════════════════════════════════════════════════════
+  // ║  channelUp & channelDown
+  // ════════════════════════════════════════════════════════════════
+  async function channelUp() {
     const list = isFullscreen ? $allChannels : $filteredChannels;
     const len = list.length;
     if (len === 0) return;
@@ -654,13 +904,25 @@
         playingChannel.set(ch);
         localStorage.setItem('last_channel_id', ch.id);
         loadEPGForChannel(ch);
+        addToRecent(ch);
         incrementInteractionTick();
+        if (isFullscreen) {
+          const catValue = ch.category_id || ch.category;
+          const langValue = ch.language_id || ch.language;
+          const catIdx = findCategoryIndex(catValue);
+          const langIdx = findLanguageIndex(langValue);
+          if (catIdx !== -1) selectedCat.set(catIdx);
+          if (langIdx !== -1) selectedLang.set(langIdx);
+          await tick();
+          overlayFocusedIdx = 0;
+          activeSection.set('overlay');
+        }
       }
     }
     resetEpgTimer();
   }
 
-  function channelDown() {
+  async function channelDown() {
     const list = isFullscreen ? $allChannels : $filteredChannels;
     const len = list.length;
     if (len === 0) return;
@@ -675,7 +937,19 @@
         playingChannel.set(ch);
         localStorage.setItem('last_channel_id', ch.id);
         loadEPGForChannel(ch);
+        addToRecent(ch);
         incrementInteractionTick();
+        if (isFullscreen) {
+          const catValue = ch.category_id || ch.category;
+          const langValue = ch.language_id || ch.language;
+          const catIdx = findCategoryIndex(catValue);
+          const langIdx = findLanguageIndex(langValue);
+          if (catIdx !== -1) selectedCat.set(catIdx);
+          if (langIdx !== -1) selectedLang.set(langIdx);
+          await tick();
+          overlayFocusedIdx = 0;
+          activeSection.set('overlay');
+        }
       }
     }
     resetEpgTimer();
@@ -686,25 +960,42 @@
   function callNativePowerOff() { /* ... */ }
   function callNativePowerOn() { /* ... */ }
 
+  // ─── CHANNEL ACTIVATION (also sets focusedIdx for proper up/down) ──
   function handleChannelActivation(channel) {
     if (!channel) return;
-    // Close favorites modal if open
-    favoritesModalOpen = false;
+    favoritePanelOpen = false;
+    showFavStrip = true;
+    recentModalOpen = false;
+
+    // Determine which list to use for focusedIdx
+    const list = isFullscreen ? $allChannels : $filteredChannels;
+    const idx = list.findIndex(c => c.id === channel.id);
+    if (idx !== -1) {
+      focusedIdx.set(idx);
+    } else if (list.length > 0) {
+      // fallback: set to first
+      focusedIdx.set(0);
+    }
+
     if ($playingChannel && $playingChannel.id === channel.id) {
-      openFullPlayerScreen();
+      openFullPlayerScreen(true);
     } else {
       playingChannel.set(channel);
       localStorage.setItem('last_channel_id', channel.id);
       loadEPGForChannel(channel);
+      addToRecent(channel);
       statusMsg.set({ text: `${channel.channel_number} - ${channel.title}`, isError: false });
       activeSection.set('channels');
       overlayFocusedIdx = -1;
       resetEpgTimer();
       setTimeout(() => {
-        if ($statusMsg?.text === `${channel.channel_number}: ${channel.title}`) {
+        if ($statusMsg?.text === `${channel.channel_number} - ${channel.title}`) {
           statusMsg.set({ text: "Ready — Press OK to play", isError: false });
         }
       }, 1500);
+      // ─── FIX: Always focus on Recent in EPG after channel activation ───
+      overlayFocusedIdx = 0;
+      activeSection.set('overlay');
     }
   }
 
@@ -719,17 +1010,78 @@
     if (keyCode === 33) { e.preventDefault(); channelUp(); return; }
     if (keyCode === 34) { e.preventDefault(); channelDown(); return; }
 
-    // ─── FAVORITES MODAL NAVIGATION ─────────────────────────────
-    if (favoritesModalOpen && $activeSection === 'favorites-modal') {
-      const len = $favorites.length;
+    // ─── FAVORITE PANEL NAVIGATION ──────────────────────────────
+    if (favoritePanelOpen && $activeSection === 'favorite-panel') {
+      const stripLen = $favorites.length;
+
       if (key === "ArrowRight") {
         e.preventDefault();
-        favoritesModalFocusedIdx = (favoritesModalFocusedIdx + 1) % len;
+        if (favoritePanelFocused === 0) {
+          if (showFavStrip && stripLen > 0) {
+            favoritePanelFocused = 1;
+            favStripFocusedIdx = 0;
+            scrollStripToFocused();
+          }
+        } else {
+          favStripFocusedIdx = (favStripFocusedIdx + 1) % stripLen;
+          scrollStripToFocused();
+        }
         return;
       }
       if (key === "ArrowLeft") {
         e.preventDefault();
-        favoritesModalFocusedIdx = (favoritesModalFocusedIdx - 1 + len) % len;
+        if (favoritePanelFocused > 0) {
+          if (favStripFocusedIdx === 0) {
+            favoritePanelFocused = 0;
+            favStripFocusedIdx = -1;
+          } else {
+            favStripFocusedIdx = (favStripFocusedIdx - 1 + stripLen) % stripLen;
+            scrollStripToFocused();
+          }
+        }
+        return;
+      }
+
+      if (key === "ArrowUp" || key === "ArrowDown") {
+        e.preventDefault();
+        return;
+      }
+
+      if (key === "Enter" || keyCode === 13) {
+        e.preventDefault();
+        if (favoritePanelFocused === 0) {
+          toggleFavoriteAndShowPanel();
+          favoritePanelFocused = 0;
+          favStripFocusedIdx = -1;
+        } else if (stripLen > 0 && favStripFocusedIdx >= 0) {
+          selectFavoriteFromStrip(favStripFocusedIdx);
+        }
+        return;
+      }
+
+      if (key === "Escape" || key === "Backspace" || keyCode === 8 || keyCode === 27) {
+        e.preventDefault();
+        closeFavoritePanel();
+        return;
+      }
+
+      e.preventDefault();
+      return;
+    }
+
+    // ─── RECENT MODAL NAVIGATION ───────────────────────────────
+    if (recentModalOpen && $activeSection === 'recent-modal') {
+      const len = recentChannels.length;
+      if (key === "ArrowRight") {
+        e.preventDefault();
+        recentModalFocusedIdx = (recentModalFocusedIdx + 1) % len;
+        scrollRecentToFocused();
+        return;
+      }
+      if (key === "ArrowLeft") {
+        e.preventDefault();
+        recentModalFocusedIdx = (recentModalFocusedIdx - 1 + len) % len;
+        scrollRecentToFocused();
         return;
       }
       if (key === "ArrowUp" || key === "ArrowDown") {
@@ -738,24 +1090,28 @@
       }
       if (key === "Enter" || keyCode === 13) {
         e.preventDefault();
-        selectFavoriteChannel(favoritesModalFocusedIdx);
+        selectRecentChannel(recentModalFocusedIdx);
         return;
       }
       if (key === "Escape" || key === "Backspace" || keyCode === 8 || keyCode === 27) {
         e.preventDefault();
-        closeFavoritesModal();
+        closeRecentModal();
         return;
       }
       e.preventDefault();
       return;
     }
 
+    // ─── General navigation ──────────────────────────────────────
     if (key === "Escape" || key === "Backspace" || keyCode === 8 || keyCode === 27) {
       e.preventDefault();
       if (document.fullscreenElement) {
-        // If favorites modal is open in fullscreen, close it first
-        if (favoritesModalOpen) {
-          closeFavoritesModal();
+        if (favoritePanelOpen) {
+          closeFavoritePanel();
+          return;
+        }
+        if (recentModalOpen) {
+          closeRecentModal();
           return;
         }
         document.exitFullscreen().catch(err => console.warn("Exit fullscreen error", err));
@@ -930,9 +1286,9 @@
           {/if}
 
           {#if $playingChannel && epgChannel && epgVisible}
-            <!-- ═══ EPG OVERLAY (shown only when favorites modal is NOT open) ═══ -->
-            {#if !favoritesModalOpen}
-              <div class="epg-overlay" class:fullscreen={isFullscreen}>
+            <!-- ═══ EPG OVERLAY (shown when no modal open) ═══ -->
+            {#if !favoritePanelOpen && !recentModalOpen}
+              <div class="epg-overlay" class:fullscreen={isFullscreen} class:non-fullscreen={!isFullscreen}>
                 <div class="epg-content">
                   <div class="epg-info">
                     <div class="epg-channel-badge">
@@ -988,20 +1344,82 @@
               </div>
             {/if}
 
-            <!-- ═══ FAVORITES GRID – REPLACES EPG IN FULLSCREEN ═══ -->
-            {#if favoritesModalOpen && isFullscreen && $favorites.length > 0}
+            <!-- ═══ FAVORITE PANEL (fullscreen) ═══ -->
+            {#if favoritePanelOpen && isFullscreen}
+              <div class="epg-overlay fullscreen favorite-panel-overlay">
+                <div class="epg-content favorite-panel-content">
+                  <!-- LEFT CARD -->
+                  <div class="fav-panel-left" class:focused={favoritePanelFocused === 0}>
+                    <div class="fav-panel-channel">
+                      <span class="fav-panel-lcn">{epgChannel?.channel_number || '--'}</span>
+                      <span class="fav-panel-name">{epgChannel?.title || 'No channel'}</span>
+                    </div>
+                    <button
+                      class="fav-panel-toggle"
+                      class:focused={favoritePanelFocused === 0}
+                      on:click={toggleFavoriteAndShowPanel}
+                      on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleFavoriteAndShowPanel()}
+                      tabindex="0"
+                    >
+                      {#if isFav}
+                        ⭐ Remove from Favorites
+                      {:else}
+                        ☆ Add to Favorites
+                      {/if}
+                    </button>
+                    <div class="fav-panel-hint">◄ ► navigate • OK toggle • BACK close</div>
+                  </div>
+
+                  <!-- RIGHT STRIP (always shown) -->
+                  <div class="fav-panel-strip">
+                    {#if $favorites.length === 0}
+                      <div class="fav-strip-empty">No favorites yet</div>
+                    {:else}
+                      {#each $favorites as channel, i}
+                        <div
+                          class="fav-strip-item"
+                          class:focused={favoritePanelFocused === 1 && favStripFocusedIdx === i}
+                          on:click={() => {
+                            favoritePanelOpen = false;
+                            activeSection.set('overlay');
+                            handleChannelActivation(channel);
+                          }}
+                          on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && (() => {
+                            favoritePanelOpen = false;
+                            activeSection.set('overlay');
+                            handleChannelActivation(channel);
+                          })()}
+                          tabindex="0"
+                          role="button"
+                        >
+                          {#if channel.icon_url}
+                            <img src={channel.icon_url} alt={channel.title} loading="lazy" />
+                          {:else}
+                            <div class="fav-strip-placeholder">{channel.channel_number}</div>
+                          {/if}
+                          <span class="fav-strip-number">{channel.channel_number}</span>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+              </div>
+            {/if}
+
+            <!-- ═══ RECENT GRID (fullscreen or any) ═══ -->
+            {#if recentModalOpen && recentChannels.length > 0}
               <div class="epg-overlay fullscreen favorites-grid-replacement">
                 <div class="epg-content">
-                  <div class="favorites-grid-header-fullscreen">
-                    ⭐ YOUR FAVORITES <span class="fav-count">({$favorites.length})</span>
+                  <div class="favorites-grid-header-fullscreen" style="color:#00C4EE;">
+                    🕐 RECENTLY WATCHED <span class="fav-count">({recentChannels.length})</span>
                   </div>
                   <div class="favorites-grid-scroll-fullscreen">
-                    {#each $favorites as channel, i}
+                    {#each recentChannels as channel, i}
                       <div
                         class="fav-grid-item-fullscreen"
-                        class:focused={favoritesModalFocusedIdx === i}
-                        on:click={() => selectFavoriteChannel(i)}
-                        on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectFavoriteChannel(i)}
+                        class:focused={recentModalFocusedIdx === i}
+                        on:click={() => selectRecentChannel(i)}
+                        on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectRecentChannel(i)}
                         tabindex="0"
                         role="button"
                       >
@@ -1013,11 +1431,6 @@
                         <span class="fav-grid-number-fullscreen">{channel.channel_number}</span>
                       </div>
                     {/each}
-                  </div>
-                  <div class="epg-buttons" style="margin-top:4px;">
-                    <div class="epg-button" style="border-color:rgba(255,215,0,0.3); background:transparent; color:#aaa; font-size:12px; padding:4px 12px; pointer-events:none;">
-                      ◄ ► navigate • OK play • BACK close
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1088,6 +1501,23 @@
   /* ─── EPG Overlay ────────────────────────────────────────────── */
   .epg-overlay { position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 20px 14px 20px; background: linear-gradient(to top, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.6) 50%, transparent 100%); pointer-events: none; transition: background 0.3s, border 0.3s, border-radius 0.3s; z-index: 100; }
   .epg-overlay.fullscreen { background: rgba(0, 0, 0, 0.88) !important; border: 2px solid #ffd700; border-radius: 14px; margin: 0 10px 10px 10px; padding: 16px 18px 12px 18px; backdrop-filter: blur(8px); box-shadow: 0 0 30px rgba(0, 0, 0, 0.8); z-index: 101; }
+  
+  /* Non-Fullscreen border removed */
+  .epg-overlay.non-fullscreen {
+    background: rgba(0, 0, 0, 0.85) !important;
+    border: none !important;
+    border-radius: 12px;
+    margin: 0 8px 8px 8px;
+    padding: 14px 16px 10px 16px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.7);
+  }
+  .epg-overlay.non-fullscreen .epg-channel-number { font-size: 20px; }
+  .epg-overlay.non-fullscreen .epg-channel-name { font-size: 16px; }
+  .epg-overlay.non-fullscreen .epg-program-title { font-size: 14px; }
+  .epg-overlay.non-fullscreen .epg-buttons { gap: 6px; }
+  .epg-overlay.non-fullscreen .epg-button { padding: 4px 10px; font-size: 12px; }
+
   .epg-content { display: flex; flex-direction: column; gap: 6px; pointer-events: auto; position: relative; }
   .epg-info { display: flex; flex-direction: column; gap: 3px; }
   .epg-buttons { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -1127,10 +1557,157 @@
   .language-item.focused { border-color: #ffd700; background: rgba(255, 215, 0, 0.15); color: #fff; box-shadow: 0 0 20px rgba(255, 215, 0, 0.2); transform: scale(1.02); }
   .language-hint { font-size: 11px; color: #888; text-align: center; letter-spacing: 0.5px; margin-top: 8px; border-top: 1px solid #333; padding-top: 12px; }
 
-  /* ─── FAVORITES GRID (replaces EPG in fullscreen) ────────────── */
-  .favorites-grid-replacement {
+  /* ─── FAVORITE PANEL OVERLAY ───────────────────────────────── */
+  .favorite-panel-overlay {
     background: rgba(0, 0, 0, 0.88) !important;
     border: 2px solid #ffd700 !important;
+    border-radius: 14px !important;
+    backdrop-filter: blur(8px) !important;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.8) !important;
+    padding: 16px 18px !important;
+  }
+  .favorite-panel-content {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    align-items: stretch;
+    pointer-events: auto;
+  }
+  .fav-panel-left {
+    flex: 0 0 260px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 12px 16px;
+    border: 2px solid #555;
+    border-radius: 12px;
+    background: rgba(0,0,0,0.3);
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .fav-panel-left.focused {
+    border-color: #ffd700;
+    background: rgba(255,215,0,0.08);
+    box-shadow: 0 0 20px rgba(255,215,0,0.15);
+  }
+  .fav-panel-channel {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .fav-panel-lcn {
+    font-size: 14px;
+    font-weight: 900;
+    color: #ffd700;
+    font-family: monospace;
+  }
+  .fav-panel-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+  }
+  .fav-panel-toggle {
+    padding: 5px 6px;
+    border-radius: 8px;
+    border: 2px solid #ffd700;
+    background: rgba(255,215,0,0.15);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .fav-panel-toggle.focused {
+    background: #ffd700;
+    color: #000;
+    box-shadow: 0 0 20px rgba(255,215,0,0.3);
+  }
+  .fav-panel-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #888;
+    text-align: center;
+    letter-spacing: 0.3px;
+  }
+
+  .fav-panel-strip {
+    flex: 1;
+    display: flex;
+    overflow-x: auto;
+    padding: 4px 0;
+    align-items: center;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(6, 6, 6, 0.3) transparent;
+  }
+  .fav-panel-strip::-webkit-scrollbar {
+    height: 4px;
+  }
+  .fav-panel-strip::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .fav-panel-strip::-webkit-scrollbar-thumb {
+    background: rgba(255,215,0,0.3);
+    border-radius: 4px;
+  }
+
+  /* ─── BIGGER FAVORITE STRIP ITEMS (like Recent) ────────────── */
+  .fav-strip-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    width: 200px;          /* was 160px */
+    cursor: pointer;
+    padding: 6px 4px;
+    border-radius: 10px;
+    transition: transform 0.15s, background 0.15s;
+    background: transparent;
+  }
+  .fav-strip-item.focused {
+    transform: scale(1.15);
+  }
+  .fav-strip-item img {
+    width: 170px;          /* was 130px */
+    height: 100px;         /* was 80px */
+    object-fit: contain;
+    border-radius: 6px;
+    background: transparent;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6));
+  }
+  .fav-strip-placeholder {
+    width: 180px;          /* was 130px */
+    height: 110px;         /* was 80px */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;       /* was 32px */
+    font-weight: 900;
+    color: #ffd700;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,215,0,0.3);
+    border-radius: 6px;
+  }
+  .fav-strip-number {
+    font-size: 14px;       /* was 16px */
+    color: #eee;
+    font-weight: 600;
+    margin-top: 6px;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.9);
+  }
+  .fav-strip-empty {
+    color: #aaa;
+    font-size: 14px;
+    font-style: italic;
+    width: 100%;
+    text-align: center;
+  }
+
+  /* ─── RECENT GRID — BIGGER icons, thinner border ───────────── */
+  .favorites-grid-replacement {
+    background: rgba(0, 0, 0, 0.88) !important;
+    border: 1px solid rgba(255, 215, 0, 0.15) !important;
     border-radius: 14px !important;
     backdrop-filter: blur(8px) !important;
     box-shadow: 0 0 30px rgba(0, 0, 0, 0.8) !important;
@@ -1150,14 +1727,17 @@
     color: #aaa;
     font-weight: 400;
   }
+
   .favorites-grid-scroll-fullscreen {
     display: flex;
-    gap: 6px;
+    gap: 24px;
     overflow-x: auto;
-    padding: 4px 4px 8px 4px;
+    padding: 16px 18px 12px 8px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 215, 0, 0.3) transparent;
+    scrollbar-color: rgba(7, 7, 7, 0.3) transparent;
     align-items: center;
+    justify-content: flex-start;
+    scroll-behavior: smooth;
   }
   .favorites-grid-scroll-fullscreen::-webkit-scrollbar {
     height: 4px;
@@ -1169,60 +1749,62 @@
     background: rgba(255, 215, 0, 0.3);
     border-radius: 4px;
   }
+
   .fav-grid-item-fullscreen {
+    display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 80px;
+    width: 200px;
     cursor: pointer;
     border-radius: 10px;
-    padding: 4px 2px;
+    padding: 6px 4px;
     background: transparent;
     transition: all 0.2s ease;
-    gap: 2px;
-  }
-  .fav-grid-item-fullscreen.focused {
+    gap: 4px;
   }
   .fav-grid-item-fullscreen.focused .fav-grid-icon-fullscreen {
-    transform: scale(1.18);
-    transition: transform 0.2s ease;
+    transform: scale(1.20);
+    border-radius: 8px;
   }
   .fav-grid-item-fullscreen.focused .fav-grid-placeholder-fullscreen {
-    transform: scale(1.18);
+    transform: scale(1.15);
     transition: transform 0.2s ease;
+    border-color: #ffd700;
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.2);
   }
   .fav-grid-icon-fullscreen {
-    width: 100px;
-    height: 60px;
+    width: 180px;
+    height: 110px;
     object-fit: contain;
     border-radius: 6px;
     background: transparent;
     filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6));
-    transition: transform 0.2s ease;
+    transition: transform 0.2s, border 0.2s;
   }
   .fav-grid-placeholder-fullscreen {
-    width: 56px;
-    height: 56px;
+    width: 90px;
+    height: 66px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
+    font-size: 28px;
     font-weight: 900;
     color: #ffd700;
-    background: transparent;
+    background: rgba(0,0,0,0.4);
     border: 1px solid rgba(255,215,0,0.3);
     border-radius: 6px;
     text-shadow: 0 2px 8px rgba(0,0,0,0.8);
     transition: transform 0.2s ease;
   }
   .fav-grid-number-fullscreen {
-    font-size: 11px;
+    font-size: 13px;
     color: #eee;
     font-weight: 600;
     letter-spacing: 0.5px;
     text-shadow: 0 2px 6px rgba(0,0,0,0.9);
-    margin-top: 2px;
+    margin-top: 6px;
   }
 
   /* ─── Animated Header ────────────────────────────────────────── */
@@ -1279,10 +1861,26 @@
     .language-item { font-size: 14px; padding: 8px 12px; }
     .epg-upcoming { gap: 8px; }
     .epg-upcoming-item { font-size: 12px; padding: 4px 10px; min-width: 100px; }
-    .fav-grid-item-fullscreen { width: 66px; }
-    .fav-grid-icon-fullscreen, .fav-grid-placeholder-fullscreen { width: 44px; height: 44px; }
+    /* Responsive favorite strip */
+    .fav-strip-item { width: 160px; }
+    .fav-strip-item img { width: 140px; height: 88px; }
+    .fav-strip-placeholder { width: 140px; height: 88px; font-size: 32px; }
+    .fav-strip-number { font-size: 16px; }
+    /* Responsive recent grid */
+    .fav-grid-item-fullscreen { width: 160px; }
+    .fav-grid-icon-fullscreen { width: 140px; height: 88px; }
+    .fav-grid-placeholder-fullscreen { width: 72px; height: 52px; font-size: 22px; }
     .favorites-grid-header-fullscreen { font-size: 14px; }
-    .fav-grid-number-fullscreen { font-size: 10px; }
+    .fav-grid-number-fullscreen { font-size: 11px; }
+    .favorites-grid-scroll-fullscreen { gap: 16px; }
+    .favorite-panel-content { flex-direction: column; gap: 12px; }
+    .fav-panel-left { flex: 1 1 auto; min-width: 200px; }
+    .fav-panel-strip { min-height: 80px; }
+    .epg-overlay.non-fullscreen { padding: 10px 12px 8px 12px; margin: 0 4px 4px 4px; }
+    .epg-overlay.non-fullscreen .epg-channel-number { font-size: 16px; }
+    .epg-overlay.non-fullscreen .epg-channel-name { font-size: 13px; }
+    .epg-overlay.non-fullscreen .epg-program-title { font-size: 12px; }
+    .epg-overlay.non-fullscreen .epg-button { padding: 3px 8px; font-size: 10px; }
   }
   @media (max-width: 480px) {
     .left-panel { flex: 0 0 200px; flex-wrap: wrap; }
@@ -1303,9 +1901,23 @@
     .language-item { font-size: 13px; padding: 6px 10px; }
     .epg-upcoming { gap: 6px; flex-direction: column; }
     .epg-upcoming-item { font-size: 11px; padding: 4px 8px; min-width: auto; }
-    .fav-grid-item-fullscreen { width: 58px; }
-    .fav-grid-icon-fullscreen, .fav-grid-placeholder-fullscreen { width: 38px; height: 38px; }
+    .fav-strip-item { width: 120px; }
+    .fav-strip-item img { width: 105px; height: 68px; }
+    .fav-strip-placeholder { width: 105px; height: 68px; font-size: 24px; }
+    .fav-strip-number { font-size: 14px; }
+    .fav-grid-item-fullscreen { width: 120px; }
+    .fav-grid-icon-fullscreen { width: 105px; height: 68px; }
+    .fav-grid-placeholder-fullscreen { width: 56px; height: 40px; font-size: 18px; }
     .favorites-grid-header-fullscreen { font-size: 13px; }
-    .fav-grid-number-fullscreen { font-size: 9px; }
+    .fav-grid-number-fullscreen { font-size: 10px; }
+    .favorites-grid-scroll-fullscreen { gap: 12px; }
+    .fav-panel-left { padding: 8px 12px; min-width: 150px; }
+    .fav-panel-lcn { font-size: 18px; }
+    .fav-panel-name { font-size: 14px; }
+    .fav-panel-toggle { font-size: 13px; padding: 6px 8px; }
+    .epg-overlay.non-fullscreen { padding: 8px 10px 6px 10px; }
+    .epg-overlay.non-fullscreen .epg-channel-number { font-size: 14px; }
+    .epg-overlay.non-fullscreen .epg-channel-name { font-size: 12px; }
+    .epg-overlay.non-fullscreen .epg-program-title { font-size: 11px; }
   }
 </style>
