@@ -1,4 +1,3 @@
-
 <script>
   import { onMount, onDestroy } from "svelte";
   import { push } from "svelte-spa-router";
@@ -32,7 +31,6 @@
   let isAutoSelecting = false;
   let userInteracted = false;
 
-  // ─── NEW: Manage mode ──────────────────────────────────────
   let manageMode = false;
 
   $: slots = buildSlots(username, profiles);
@@ -81,7 +79,6 @@
 
   onMount(() => {
     const savedToken = localStorage.getItem("ulka_token");
-
     if (!savedToken) {
       push("/login");
       return;
@@ -94,13 +91,35 @@
 
     username = getMainProfileName();
 
-    const mainData = {
-      name: username,
-      age: "",
-      gender: "Male",
-      image: AVATAR_DEFAULT,
-    };
-    localStorage.setItem("ulka_main_profile", JSON.stringify(mainData));
+    // Preserve main profile data
+    let mainProfileData = null;
+    try {
+      const raw = localStorage.getItem("ulka_main_profile");
+      if (raw) mainProfileData = JSON.parse(raw);
+    } catch (_) {}
+
+    if (!mainProfileData) {
+      const mainData = {
+        name: username,
+        age: "18",
+        gender: "Male",
+        image: AVATAR_DEFAULT,
+      };
+      localStorage.setItem("ulka_main_profile", JSON.stringify(mainData));
+    } else {
+      if (mainProfileData.name !== username) {
+        mainProfileData.name = username;
+        localStorage.setItem("ulka_main_profile", JSON.stringify(mainProfileData));
+      }
+      if (!mainProfileData.age) {
+        mainProfileData.age = "18";
+        localStorage.setItem("ulka_main_profile", JSON.stringify(mainProfileData));
+      }
+      if (!mainProfileData.gender) {
+        mainProfileData.gender = "Male";
+        localStorage.setItem("ulka_main_profile", JSON.stringify(mainProfileData));
+      }
+    }
     localStorage.setItem("ulka_main_profile_name", username);
 
     loadProfiles();
@@ -111,12 +130,19 @@
       bgIndex = (bgIndex + 1) % BG_IMAGES.length;
     }, 8000);
 
-    const alreadySelected = sessionStorage.getItem("ulka_profile_selected");
+    // ─── NEW: Always show UI, then auto-select after 3 sec if coming from login ──
     const fromLogin = sessionStorage.getItem("from_login") === "true";
-
-    if (!alreadySelected && fromLogin) {
+    if (fromLogin) {
+      // Start auto-select timer; user can interrupt with any key
       startAutoSelectTimer();
+      // Optionally, you can reduce the delay if there are no extra profiles:
+      // if (profiles.length === 0) {
+      //   // reduce timer to 1 sec for faster transition
+      //   clearAutoSelectTimer();
+      //   autoSelectTimer = setTimeout(() => performAutoSelect(), 1000);
+      // }
     } else {
+      // If not from login, clear the flag (just in case)
       sessionStorage.removeItem("from_login");
     }
   });
@@ -132,7 +158,6 @@
     profiles = stored ? JSON.parse(stored) : [];
   }
 
-  // ─── Auto‑select (unchanged) ──────────────────────────────
   function startAutoSelectTimer() {
     userInteracted = false;
     isAutoSelecting = false;
@@ -142,7 +167,7 @@
       if (!userInteracted && !isAutoSelecting) {
         performAutoSelect();
       }
-    }, 3000);
+    }, 3000); // 3 seconds – adjust as needed
   }
 
   function clearAutoSelectTimer() {
@@ -174,23 +199,19 @@
     }
   }
 
-  // ─── NEW: Toggle manage mode ──────────────────────────────
   function toggleManageMode() {
     manageMode = !manageMode;
     if (manageMode) {
-      // Optionally reset focus to first profile
       focusIndex = 0;
     }
   }
 
-  // ─── Exit manage mode ──────────────────────────────────────
   function exitManageMode() {
     if (manageMode) {
       manageMode = false;
     }
   }
 
-  // ─── Keydown handler (updated) ────────────────────────────
   function handleKeyDown(e) {
     if (e.target.tagName === "INPUT") return;
 
@@ -206,6 +227,7 @@
     if (!nav.includes(e.key)) return;
     e.preventDefault();
 
+    // User interacted → cancel auto‑select timer
     if (!userInteracted) {
       userInteracted = true;
       clearAutoSelectTimer();
@@ -227,13 +249,11 @@
       return;
     }
 
-    // ─── NEW: Exit manage mode on Escape/Backspace ──────────
     if (manageMode && (e.key === "Escape" || e.key === "Backspace")) {
       exitManageMode();
       return;
     }
 
-    // ─── Navigation ──────────────────────────────────────────
     switch (e.key) {
       case "ArrowDown":
         if (focusIndex === "logout") break;
@@ -271,7 +291,6 @@
     }
   }
 
-  // ─── Logout ────────────────────────────────────────────────
   async function handleLogout() {
     await logoutUser();
     clearAuth();
@@ -281,21 +300,18 @@
     push("/login");
   }
 
-  // ─── Select / Edit slot ────────────────────────────────────
   function selectSlot(slot) {
     if (slot.isAdd) {
       push("/create-profile");
       return;
     }
 
-    // ─── NEW: If in manage mode, go to edit ─────────────────
     if (manageMode) {
       push(`/edit-profile/${slot.name}`);
-      exitManageMode(); // exit after navigating
+      exitManageMode();
       return;
     }
 
-    // Normal select (go to home)
     clearAutoSelectTimer();
     userInteracted = true;
     sessionStorage.removeItem("from_login");
@@ -349,11 +365,6 @@
           <button
             class="profile-item"
             on:click={() => {
-              if (!userInteracted) {
-                userInteracted = true;
-                clearAutoSelectTimer();
-                sessionStorage.removeItem("from_login");
-              }
               focusIndex = idx;
               selectSlot(slot);
             }}
@@ -370,7 +381,6 @@
                 class:manage-mode={manageMode}
               >
                 <img src={slot.image} alt={slot.name} />
-                <!-- ─── NEW: Edit icon in manage mode ─────── -->
                 {#if manageMode}
                   <span class="edit-badge">✎</span>
                 {/if}
@@ -386,16 +396,10 @@
         {/each}
       </div>
 
-      <!-- ─── Manage button toggles mode ──────────────────── -->
       <button
         class="manage-btn"
         class:focused={focusIndex === "manage" && !showLogoutConfirm}
         on:click={() => {
-          if (!userInteracted) {
-            userInteracted = true;
-            clearAutoSelectTimer();
-            sessionStorage.removeItem("from_login");
-          }
           focusIndex = "manage";
           toggleManageMode();
         }}
@@ -417,11 +421,6 @@
       class="logout-btn"
       class:focused={focusIndex === "logout" && !showLogoutConfirm}
       on:click={() => {
-        if (!userInteracted) {
-          userInteracted = true;
-          clearAutoSelectTimer();
-          sessionStorage.removeItem("from_login");
-        }
         focusIndex = "logout";
         showLogoutConfirm = true;
         confirmFocus = "cancel";
@@ -570,8 +569,6 @@
     border-radius: 50%;
     object-fit: cover;
   }
-
-  /* ─── NEW: Edit badge in manage mode ───────────────────── */
   .profile-btn.manage-mode .edit-badge {
     position: absolute;
     bottom: -6px;
@@ -588,7 +585,6 @@
     font-weight: bold;
     border: 2px solid #000;
   }
-
   .profile-name {
     color: #fff;
     font-size: 18px;
@@ -602,7 +598,6 @@
     font-weight: 400;
     margin-left: 4px;
   }
-
   .add-profile-btn {
     width: 72px;
     height: 72px;
@@ -644,7 +639,6 @@
   }
   .build-type--beta     { background: #1a73e8; color: #fff; }
   .build-type--internal { background: #555;    color: #fff; }
-
   .manage-btn {
     margin-top: 28px;
     padding: 10px 9px;
@@ -673,7 +667,6 @@
     transform: scale(1.05);
     box-shadow: 0 0 20px rgba(229, 9, 20, 0.3);
   }
-
   .logout-btn {
     margin-top: auto;
     padding: 10px 30px;
@@ -691,7 +684,6 @@
     transform: scale(1.05);
     box-shadow: 0 0 15px rgba(229, 9, 20, 0.8);
   }
-
   .logout-confirm-overlay {
     position: fixed;
     top: 0;

@@ -46,6 +46,7 @@
   import { writable } from "svelte/store";
   export const interactionTick = writable(0);
   function incrementInteractionTick() {
+    // User interaction – just update the tick, EPG will reset its timer
     interactionTick.update(n => n + 1);
   }
 
@@ -172,7 +173,7 @@
       autoFullscreenPending = true;
       autoFullscreenRequested = false;
       autoFullscreenTransition = true;
-      epgVisible = false;
+      epgVisible = false; // will be shown after fullscreen enter
     }
 
     const storedFavs = localStorage.getItem('favorites');
@@ -218,12 +219,14 @@
       });
       if (filtered.length > 0) fetchAllChannelsEPG(filtered);
 
+      // ─── ADD DEFAULT FAVORITES (first 10 channels) ───
       if ($favorites.length === 0 && filtered.length > 0) {
         const defaultFavs = filtered.slice(0, 10);
         favorites.set(defaultFavs);
         localStorage.setItem('favorites', JSON.stringify(defaultFavs));
       }
 
+      // ─── Fetch user profile to get startupChannel ──────────
       let startupChannelNumber = null;
       try {
         const profileData = await fetchUserProfile();
@@ -235,6 +238,7 @@
         console.warn('[Home] Could not fetch user profile:', e);
       }
 
+      // ─── Determine initial channel ──────────────────────────────
       let targetChannel = null;
       const savedChannelId = localStorage.getItem('last_channel_id');
 
@@ -272,6 +276,7 @@
         statusMsg.set({ text: `${targetChannel.channel_number} - ${targetChannel.title}`, isError: false });
       }
 
+      // ─── Handle auto-fullscreen (if pending) ──────────────────
       if (autoFullscreenPending && !autoFullscreenRequested) {
         let channelForFS = $playingChannel || targetChannel || (filtered.length > 0 ? filtered[0] : null);
 
@@ -280,7 +285,7 @@
           updateFocusedEpg(channelForFS);
           await tick();
 
-          epgVisible = false;
+          epgVisible = false; // will be set true after fullscreen
           autoFullscreenRequested = true;
           autoFullscreenPending = false;
           isAutoFullscreen = true;
@@ -292,14 +297,14 @@
             overlayFocusedIdx = 0;
             setTimeout(() => {
               autoFullscreenTransition = false;
-              resetEpgTimer();
+              resetEpgTimer(); // now shows EPG
             }, 500);
           } else {
             if (!fullscreenRequestInProgress) {
               openFullPlayerScreen(true);
               setTimeout(() => {
                 autoFullscreenTransition = false;
-                resetEpgTimer();
+                resetEpgTimer(); // show EPG
               }, 800);
             }
           }
@@ -362,7 +367,7 @@
   });
 
   // ════════════════════════════════════════════════════════════════
-  // ║  handleFullscreenChange (FIXED)
+  // ║  handleFullscreenChange
   // ════════════════════════════════════════════════════════════════
   async function handleFullscreenChange() {
     isFullscreen = !!document.fullscreenElement;
@@ -380,7 +385,7 @@
       if (autoFullscreenTransition) {
         autoFullscreenTransition = false;
       }
-      resetEpgTimer();
+      resetEpgTimer(); // shows EPG and starts timer
     } else {
       isAutoFullscreen = false;
       autoFullscreenRequested = false;
@@ -391,9 +396,8 @@
 
       const ch = $playingChannel;
       if (ch) {
-        // FIX: use genre_id and subgenre_id instead of category_id/language_id
-        const catValue = ch.genre_id ?? ch.category_id ?? ch.category ?? null;
-        const langValue = ch.subgenre_id ?? ch.language_id ?? ch.language ?? null;
+        const catValue = ch.category_id || ch.category;
+        const langValue = ch.language_id || ch.language;
         const catIdx = findCategoryIndex(catValue);
         const langIdx = findLanguageIndex(langValue);
         if (catIdx !== -1) selectedCat.set(catIdx);
@@ -813,13 +817,12 @@
   }
 
   // ════════════════════════════════════════════════════════════════
-  // ║  switchToChannelByNumber (FIXED)
+  // ║  switchToChannelByNumber (Smart matching)
   async function switchToChannelByNumber(channelNumber) {
     const channel = $allChannels.find(ch => parseInt(ch.channel_number) === parseInt(channelNumber));
     if (channel) {
-      // FIX: use genre_id and subgenre_id
-      const catValue = channel.genre_id ?? channel.category_id ?? channel.category ?? null;
-      const langValue = channel.subgenre_id ?? channel.language_id ?? channel.language ?? null;
+      const catValue = channel.category_id || channel.category;
+      const langValue = channel.language_id || channel.language;
       const catIdx = findCategoryIndex(catValue);
       const langIdx = findLanguageIndex(langValue);
       if (catIdx !== -1) selectedCat.set(catIdx);
@@ -913,7 +916,7 @@
   }
 
   // ════════════════════════════════════════════════════════════════
-  // ║  channelUp & channelDown (FIXED)
+  // ║  channelUp & channelDown
   // ════════════════════════════════════════════════════════════════
   async function channelUp() {
     const list = isFullscreen ? $allChannels : $filteredChannels;
@@ -933,9 +936,8 @@
         addToRecent(ch);
         incrementInteractionTick();
         if (isFullscreen) {
-          // FIX: use genre_id and subgenre_id
-          const catValue = ch.genre_id ?? ch.category_id ?? ch.category ?? null;
-          const langValue = ch.subgenre_id ?? ch.language_id ?? ch.language ?? null;
+          const catValue = ch.category_id || ch.category;
+          const langValue = ch.language_id || ch.language;
           const catIdx = findCategoryIndex(catValue);
           const langIdx = findLanguageIndex(langValue);
           if (catIdx !== -1) selectedCat.set(catIdx);
@@ -967,8 +969,8 @@
         addToRecent(ch);
         incrementInteractionTick();
         if (isFullscreen) {
-          const catValue = ch.genre_id ?? ch.category_id ?? ch.category ?? null;
-          const langValue = ch.subgenre_id ?? ch.language_id ?? ch.language ?? null;
+          const catValue = ch.category_id || ch.category;
+          const langValue = ch.language_id || ch.language;
           const catIdx = findCategoryIndex(catValue);
           const langIdx = findLanguageIndex(langValue);
           if (catIdx !== -1) selectedCat.set(catIdx);

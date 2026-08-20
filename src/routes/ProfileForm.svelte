@@ -1,3 +1,5 @@
+//ProfileFrom.svelte
+
 <script>
   import { onMount, onDestroy } from "svelte";
   import { push } from "svelte-spa-router";
@@ -24,6 +26,8 @@
 
   // ─── Flag to know if we are editing the main profile ──────
   let isEditingMain = false;
+  // ─── Computed: show delete button only for non‑main edits ─
+  $: showDelete = mode === "edit" && !isEditingMain;
 
   // ─── Focus and keyboard state ──────────────────────────────
   let currentFocus = 0;
@@ -64,8 +68,32 @@
   function loadProfileForEdit() {
     if (!profileId) return;
 
-    isEditingMain = false;
+    // 1. Get main profile details
+    const mainName = localStorage.getItem("ulka_main_profile_name") || "";
+    let mainProfileData = null;
+    try {
+      const mainRaw = localStorage.getItem("ulka_main_profile");
+      if (mainRaw) mainProfileData = JSON.parse(mainRaw);
+    } catch (_) {}
 
+    // 2. Check if we are editing the main profile (by name)
+    if (profileId === mainName || (mainProfileData && profileId === mainProfileData.name)) {
+      isEditingMain = true;
+      // Use main profile data if available, otherwise fallback
+      if (mainProfileData) {
+        name = mainProfileData.name || mainName;
+        age = parseInt(mainProfileData.age, 10) || 18;
+        gender = mainProfileData.gender || "Male";
+      } else {
+        name = mainName;
+        age = 18;
+        gender = "Male";
+      }
+      selectedAgeGroup = getAgeGroup(age);
+      return;
+    }
+
+    // 3. Not main – look in profiles array
     const stored = JSON.parse(localStorage.getItem("ulka_profiles") || "[]");
     const profile = stored.find(p => p.id === profileId || p.name === profileId);
     if (profile) {
@@ -73,32 +101,16 @@
       age = parseInt(profile.age, 10) || 18;
       gender = profile.gender || "Male";
       selectedAgeGroup = getAgeGroup(age);
+      isEditingMain = false;
       return;
     }
 
-    try {
-      const mainRaw = localStorage.getItem("ulka_main_profile");
-      if (mainRaw) {
-        const main = JSON.parse(mainRaw);
-        if (main.name === profileId) {
-          name = main.name || "";
-          age = parseInt(main.age, 10) || 18;
-          gender = main.gender || "Male";
-          selectedAgeGroup = getAgeGroup(age);
-          isEditingMain = true;
-          return;
-        }
-      }
-    } catch (_) {}
-
-    const mainName = localStorage.getItem("ulka_main_profile_name");
-    if (mainName === profileId) {
-      name = mainName;
-      age = 18;
-      gender = "Male";
-      selectedAgeGroup = getAgeGroup(age);
-      isEditingMain = true;
-    }
+    // 4. Still nothing? fallback
+    name = profileId;
+    age = 18;
+    gender = "Male";
+    selectedAgeGroup = getAgeGroup(age);
+    isEditingMain = false;
   }
 
   // ─── Save ──────────────────────────────────────────────────
@@ -133,6 +145,7 @@
       }
     }
 
+    // Always update main profile if this is the main one
     if (isEditingMain) {
       const mainData = {
         name: newProfile.name,
@@ -249,14 +262,14 @@
       } else if (key === "Escape" || key === "Backspace") {
         e.preventDefault();
         showDeleteConfirm = false;
-        setFocus(5);
+        setFocus(showDelete ? 5 : 4); // fallback to cancel if delete button absent
       } else if (key === "Enter") {
         e.preventDefault();
         if (confirmFocus === "confirm") {
           handleDeleteConfirm();
         } else {
           showDeleteConfirm = false;
-          setFocus(5);
+          setFocus(showDelete ? 5 : 4);
         }
       }
       return;
@@ -276,6 +289,7 @@
       return;
     }
 
+    // Age group navigation
     if (currentFocus === 1) {
       if (key === "ArrowLeft") {
         e.preventDefault();
@@ -291,6 +305,7 @@
       }
     }
 
+    // Gender toggle
     if (currentFocus === 2) {
       if (key === "ArrowLeft" || key === "ArrowRight") {
         e.preventDefault();
@@ -299,14 +314,14 @@
       }
     }
 
-    const isEdit = mode === "edit";
+    // ─── Focus map (adjusted for showDelete) ────────────────
     let focusMap = {};
     focusMap[0] = { up: null, down: 1, left: null, right: null };
     focusMap[1] = { up: 0, down: 2, left: null, right: null };
     focusMap[2] = { up: 1, down: 3, left: null, right: null };
     focusMap[3] = { up: 2, down: 4, left: null, right: 4 };
-    focusMap[4] = { up: 3, down: isEdit ? 5 : null, left: 3, right: isEdit ? 5 : null };
-    if (isEdit) {
+    focusMap[4] = { up: 3, down: showDelete ? 5 : null, left: 3, right: showDelete ? 5 : null };
+    if (showDelete) {
       focusMap[5] = { up: 4, down: null, left: 4, right: null };
     }
 
@@ -341,7 +356,7 @@
           handleSave();
         } else if (currentFocus === 4) {
           handleCancel();
-        } else if (currentFocus === 5 && isEdit) {
+        } else if (currentFocus === 5 && showDelete) {
           showDeleteConfirm = true;
           confirmFocus = "cancel";
         }
@@ -407,7 +422,6 @@
     {#each BG_IMAGES as src, i}
       <img {src} alt="Background {i+1}" class="bg-image" class:active={bgIndex === i} />
     {/each}
-    <!-- ─── Overlay removed – images are clean ────────────── -->
   </div>
 
   <!-- Main layout: LEFT panel + keyboard at bottom -->
@@ -441,7 +455,6 @@
             bind:this={focusRefs[1]}
             id="age-control"
             class="option-group"
-            class:focused={currentFocus === 1}
             tabindex="0"
             role="group"
             aria-label="Age group selection"
@@ -471,7 +484,6 @@
             bind:this={focusRefs[2]}
             id="gender-control"
             class="option-group"
-            class:focused={currentFocus === 2}
             tabindex="0"
             role="group"
             aria-label="Gender selection"
@@ -509,8 +521,14 @@
           <button bind:this={focusRefs[4]} class="action-btn cancel-btn" class:focused={currentFocus === 4} on:click={handleCancel} on:focus={() => setFocus(4)}>
             Cancel
           </button>
-          {#if mode === "edit"}
-            <button bind:this={focusRefs[5]} class="action-btn delete-btn" class:focused={currentFocus === 5} on:click={() => { showDeleteConfirm = true; confirmFocus = "cancel"; }} on:focus={() => setFocus(5)}>
+          {#if showDelete}
+            <button
+              bind:this={focusRefs[5]}
+              class="action-btn delete-btn"
+              class:focused={currentFocus === 5}
+              on:click={() => { showDeleteConfirm = true; confirmFocus = "cancel"; }}
+              on:focus={() => setFocus(5)}
+            >
               🗑 Delete
             </button>
           {/if}
@@ -540,7 +558,7 @@
       <h3>Delete Profile?</h3>
       <p>All data will be permanently lost. Are you sure?</p>
       <div class="confirm-actions">
-        <button class="confirm-btn" class:focused={confirmFocus === "cancel"} on:click={() => { showDeleteConfirm = false; setFocus(5); }} on:focus={() => { confirmFocus = "cancel"; }}>Cancel</button>
+        <button class="confirm-btn" class:focused={confirmFocus === "cancel"} on:click={() => { showDeleteConfirm = false; setFocus(showDelete ? 5 : 4); }} on:focus={() => { confirmFocus = "cancel"; }}>Cancel</button>
         <button class="confirm-btn danger" class:focused={confirmFocus === "confirm"} on:click={handleDeleteConfirm} on:focus={() => { confirmFocus = "confirm"; }}>Delete</button>
       </div>
     </div>
@@ -577,8 +595,6 @@
     transition: opacity 1.5s ease-in-out;
   }
   .bg-image.active { opacity: 1; }
-
-  /* ─── No overlay – background images remain clear ───────── */
 
   .main-layout {
     position: relative;
@@ -683,10 +699,7 @@
     outline: none;
     flex-wrap: wrap;
   }
-  .option-group.focused {
-    border-color: #e50914;
-    box-shadow: 0 0 24px rgba(229, 9, 20, 0.2);
-  }
+  /* Focus border removed from option-group as requested */
 
   .option-item {
     display: flex;

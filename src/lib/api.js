@@ -1,3 +1,5 @@
+// lib/api.js
+
 import {
   API_HOST,
   CHANNELS_ENDPOINT,
@@ -239,7 +241,9 @@ export async function loginUser(username, password) {
   if (data?.status_code === 200 && data.response_object?.[0]?.access_token) {
     const token = data.response_object[0].access_token;
     localStorage.setItem('ulka_token', token);
-    console.log('[Auth] Login successful, token stored');
+    // ─── NEW: store username so we can call profile API later ───
+    localStorage.setItem('ulka_username', username);
+    console.log('[Auth] Login successful, token and username stored');
     return token;
   }
 
@@ -271,6 +275,48 @@ export async function logoutUser() {
     console.log('[Auth] Logout response:', data);
   } catch (error) {
     console.error('[Auth] Logout API error:', error);
+  }
+}
+
+/**
+ * Fetch user profile (account info) from the API.
+ * Contains startupChannel, account_lock, and other user details.
+ * Returns the full `data` object from the response, or null on failure.
+ */
+export async function fetchUserProfile() {
+  const token = localStorage.getItem('ulka_token');
+  const username = localStorage.getItem('ulka_username');
+  if (!token || !username) {
+    console.warn('[fetchUserProfile] Missing token or username');
+    return null;
+  }
+
+  const url = `${API_HOST}/api/public/customer/${username}?apikey=abec967abb9d7e0a97618c58fcb9fce8`;
+  console.log('[fetchUserProfile] Fetching:', url);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'auth': 'auth=' + token, 'Content-Type': 'application/json' }
+    });
+
+    if (!response.ok) {
+      console.error('[fetchUserProfile] HTTP', response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log('[fetchUserProfile] Response:', data);
+
+    if (data.data && data.data.account_lock === 0) {
+      return data.data; // contains startupChannel, etc.
+    } else {
+      console.warn('[fetchUserProfile] Account locked or invalid response');
+      return null;
+    }
+  } catch (error) {
+    console.error('[fetchUserProfile] Error:', error);
+    return null;
   }
 }
 

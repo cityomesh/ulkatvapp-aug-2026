@@ -4,11 +4,10 @@
   import { activeProfile } from '../stores/appStore.js';
   import { APP_NAME } from '../lib/app_manifest.js';
 
-  // ── LOCAL IMAGES (replace Unsplash/Google) ──────────────────────────────
+  // ── LOCAL IMAGES ──────────────────────────────────────────────
   const EXIT_IMAGES = [
     "/images/appstore/ottapps/wall5.png",
     "/images/appstore/ottapps/wallapaper.png",
-    "/images/appstore/ottapps/wall10.jpg",
     "/images/appstore/ottapps/wall6.png",
   ];
 
@@ -17,14 +16,14 @@
 
   let selectedButton = 'change';   // 'change' or 'exit'
 
-  // Temporary message (for key feedback)
+  // Temporary message
   let tempMessage = "";
   let tempMessageTimeout;
 
-  // Power state (track locally for toggle)
+  // Power state
   let isSystemPoweredOn = true;
 
-  // ── Native Power Bridge (STB specific) ───────────────────────────────────
+  // ── Native Power Bridge ──────────────────────────────────────
   function callNativePowerOff() {
     if (typeof window.powerOff === "function") {
       window.powerOff();
@@ -67,7 +66,7 @@
     }
   }
 
-  // ── Helper: temporary on‑screen message ─────────────────────────────────
+  // ── Helper: temporary message ──────────────────────────────
   function showTempMessage(msg, isError = false) {
     if (tempMessageTimeout) clearTimeout(tempMessageTimeout);
     tempMessage = msg;
@@ -76,9 +75,13 @@
     }, 2000);
   }
 
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
+  // ── Lifecycle ──────────────────────────────────────────────────
   onMount(() => {
-    // Preload all exit images for instant display
+    // ─── Clear resume state so next launch shows profile screen ──
+    localStorage.removeItem('ulka_last_active_profile');
+    localStorage.removeItem('ulka_app_state');
+
+    // Preload images
     EXIT_IMAGES.forEach(src => {
       const img = new Image();
       img.src = src;
@@ -97,12 +100,11 @@
     if (tempMessageTimeout) clearTimeout(tempMessageTimeout);
   });
 
-  // ── Keyboard Navigation (full remote support) ───────────────────────────
+  // ── Keyboard Navigation ──────────────────────────────────────
   function handleKeyDown(e) {
     const keyCode = e.keyCode || e.which;
     const key = e.key;
 
-    // ── Keys that should always work (including Power) ──
     // Prevent default for all remote keys
     const allRemoteKeys = [
       "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape", "Backspace",
@@ -116,56 +118,56 @@
       e.preventDefault();
     }
 
-    // ── POWER ───────────────────────────────────────────────────────────────
+    // POWER
     if (keyCode === 152) {
       handlePowerToggle();
       return;
     }
 
-    // ── HOME ────────────────────────────────────────────────────────────────
+    // HOME
     if (keyCode === 15) {
       window.location.href = "/launcher/index.html";
       return;
     }
 
-    // ── CH UP / DOWN (not used on exit screen) ─────────────────────────────
+    // CH UP / DOWN
     if (keyCode === 33) { showTempMessage("CH ▲ – Not available"); return; }
     if (keyCode === 34) { showTempMessage("CH ▼ – Not available"); return; }
 
-    // ── Colored keys ───────────────────────────────────────────────────────
+    // Colored keys
     if (keyCode === 403) { showTempMessage("🔴 Red button"); return; }
     if (keyCode === 404) { showTempMessage("🟢 Green button"); return; }
     if (keyCode === 405) { showTempMessage("🟡 Yellow button"); return; }
     if (keyCode === 406) { showTempMessage("🔵 Blue button"); return; }
 
-    // ── Dedicated OTT apps ─────────────────────────────────────────────────
+    // Dedicated OTT apps
     if (keyCode === 226) { showTempMessage("Netflix – Not available"); return; }
     if (keyCode === 227) { showTempMessage("Prime Video – Not available"); return; }
     if (keyCode === 228) { showTempMessage("JioStar – Not available"); return; }
 
-    // ── Other function keys ────────────────────────────────────────────────
+    // Other function keys
     if (keyCode === 19) { showTempMessage("Guide – Not available"); return; }
     if (keyCode === 20) { showTempMessage("Live TV – Not available"); return; }
     if (keyCode === 14) { showTempMessage("Setup – Not available"); return; }
     if (keyCode === 36) { showTempMessage("Menu – Not available"); return; }
     if (keyCode === 16) { showTempMessage("Favorites – Not available"); return; }
 
-    // ── Page Up / Down ─────────────────────────────────────────────────────
+    // Page Up / Down
     if (keyCode === 33) { showTempMessage("Page Up"); return; }
     if (keyCode === 34) { showTempMessage("Page Down"); return; }
 
-    // ── END, INSERT, DELETE ────────────────────────────────────────────────
+    // END, INSERT, DELETE
     if (keyCode === 35) { showTempMessage("End"); return; }
     if (keyCode === 45) { showTempMessage("Insert"); return; }
     if (keyCode === 46) { showTempMessage("Delete"); return; }
 
-    // ── Function keys F1-F12 ───────────────────────────────────────────────
+    // Function keys
     if (keyCode >= 112 && keyCode <= 123) {
       showTempMessage(`F${keyCode - 111} pressed`);
       return;
     }
 
-    // ── Numeric keys (0-9) – show toast ────────────────────────────────────
+    // Numeric keys
     if ((keyCode >= 48 && keyCode <= 57) || (keyCode >= 96 && keyCode <= 105)) {
       let num = String.fromCharCode(keyCode);
       if (keyCode >= 96 && keyCode <= 105) num = String(keyCode - 96);
@@ -173,13 +175,13 @@
       return;
     }
 
-    // ── Letters A-Z – show toast ───────────────────────────────────────────
+    // Letters A-Z
     if (keyCode >= 65 && keyCode <= 90) {
       showTempMessage(`Key ${key} pressed`);
       return;
     }
 
-    // ── Punctuation keys – show toast ──────────────────────────────────────
+    // Punctuation
     const punctMap = {
       186: ";", 187: "=", 188: ",", 189: "-", 190: ".", 191: "/",
       192: "`", 219: "[", 220: "\\", 221: "]", 222: "'"
@@ -189,9 +191,9 @@
       return;
     }
 
-    // ── Existing navigation (Up, Down, Enter, Escape/Backspace) ────────────
+    // Existing navigation
     if (key === 'Escape' || key === 'Backspace' || keyCode === 8) {
-      push('/home'); // Go back to app
+      push('/home');
       return;
     }
 
@@ -201,23 +203,26 @@
 
     if (key === 'Enter' || keyCode === 13) {
       if (selectedButton === 'change') {
-        // Keep auth token, drop profile session, go to profile selection
+        // Change Profile: clear resume state and go to profile selection
+        localStorage.removeItem('ulka_last_active_profile');
+        localStorage.removeItem('ulka_app_state');
         sessionStorage.removeItem('ulka_profile_selected');
         push('/profile');
       } else {
-        // Redirect to remote app launcher / website
+        // Exit App: clear resume state and redirect to launcher
+        localStorage.removeItem('ulka_last_active_profile');
+        localStorage.removeItem('ulka_app_state');
         window.location.href = 'http://127.0.0.1:8080/';
       }
     }
   }
 </script>
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     TEMPLATE
-══════════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- TEMPLATE -->
 <div class="exit-container">
 
-  <!-- Left panel: Rotating image (local images) -->
+  <!-- Left panel: Rotating images -->
   <div class="exit-left">
     {#each EXIT_IMAGES as img, idx}
       <img
@@ -259,11 +264,9 @@
         </button>
       </div>
 
-      <!-- Local logo – path corrected as requested -->
       <img src="/images/appstore/ottapps/UlkaTV.png" alt="ulkatv" class="exit-logo" />
     </div>
   </div>
-
 </div>
 
 <!-- Temporary message overlay -->
@@ -273,18 +276,16 @@
   </div>
 {/if}
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     STYLES
-══════════════════════════════════════════════════════════════════════════ -->
+<!-- ════════════════════════════════════════════════════════ -->
+<!-- STYLES -->
 <style>
   .exit-container {
     display: flex;
     width: 100vw;
     height: 100vh;
-    background-color: #000;  /* fallback – no white flash */
+    background-color: #000;
   }
 
-  /* ── Left Image Banner ── */
   .exit-left {
     width: 75%;
     height: 100%;
@@ -300,14 +301,13 @@
     left: 0;
     opacity: 0;
     transition: opacity 1s ease-in-out;
-    will-change: opacity;  /* GPU acceleration for smooth transitions */
+    will-change: opacity;
   }
 
   .exit-left img.visible {
     opacity: 1;
   }
 
-  /* ── Right Content Panel ── */
   .exit-right {
     width: 25%;
     height: 100%;
@@ -380,7 +380,6 @@
     margin-top: 8px;
   }
 
-  /* Temporary message overlay */
   .temp-message {
     position: fixed;
     bottom: 80px;
@@ -399,7 +398,6 @@
     pointer-events: none;
   }
 
-  /* Responsive fixes if needed */
   @media (min-width: 1600px) {
     .exit-title { font-size: 38px; }
     .exit-greeting { font-size: 32px; }
